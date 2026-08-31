@@ -1,0 +1,42 @@
+version: "3"
+
+tasks:
+  python:test:
+    desc: Run Python unit and integration tests
+    cmds:
+      - uv run --offline --locked pytest
+
+  python:lint:
+    desc: Run Python lint checks
+    cmds:
+      - uv run --offline --locked ruff check .
+
+  browser:sync:
+    desc: Install locked browser-test dependencies and Chromium
+    cmds:
+      - npm --prefix tests/browser ci
+      - npm --prefix tests/browser exec -- playwright install chromium
+
+  browser:test:
+    desc: Run mocked browser regressions
+    deps:
+      - browser:sync
+    cmds:
+      - npm --prefix tests/browser test
+
+  test:
+    desc: Run all Sisyphus tests
+    deps:
+      - browser:sync
+    cmds:
+      - uv run --offline --locked pytest
+      - npm --prefix tests/browser test
+
+  validate:
+    desc: Run lint and tests
+    deps:
+      - browser:sync
+    cmds:
+      - uv run --offline --locked ruff check .
+      - uv run --offline --locked pytest
+      - npm --prefix tests/browser test
