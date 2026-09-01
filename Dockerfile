@@ -1,3 +1,13 @@
+# Sisyphus production image: React frontend + FastAPI backend + pinned
+# Taskwarrior 3.x, served as one container (plan §11).
+#
+# Durable paths:
+#   /config  generated taskrc + boards.yaml (mount to persist/customize)
+#   /data    Taskwarrior/TaskChampion replica (mount to persist)
+#
+# NOTE: do not scale this image horizontally against one shared /data path;
+# one backend process owns one replica (plan §7).
+
 ARG TASK_VERSION=3.4.2
 ARG TASK_SHA256=d302761fcd1268e4a5a545613a2b68c61abd50c0bcaade3b3e68d728dd02e716
 
@@ -36,16 +46,33 @@ RUN curl -fsSLO "https://github.com/GothenburgBitFactory/taskwarrior/releases/do
     && cmake --install build \
     && task --version
 
+FROM docker.io/library/node:22-slim AS frontend-build
+WORKDIR /src/frontend
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+RUN npm run build
+
+FROM docker.io/library/ubuntu:24.04 AS backend-build
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get -o Acquire::Retries=5 update \
+    && apt-get install -y --no-install-recommends ca-certificates curl python3 python3-venv \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+COPY backend/ /src/backend/
+RUN /root/.local/bin/uv venv /opt/venv --python /usr/bin/python3 \
+    && /root/.local/bin/uv pip install --python /opt/venv/bin/python /src/backend
+
 FROM docker.io/library/ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
-ENV TASKBOARD_HOST=0.0.0.0
-ENV TASKBOARD_PORT=8080
-ENV TASKBOARD_CONFIG=/config
-ENV TASKBOARD_DATA=/data
-ENV TASKRC=/config/taskrc
-ENV TASKDATA=/data
+ENV PATH=/opt/venv/bin:${PATH}
+ENV SISYPHUS_HOST=0.0.0.0
+ENV SISYPHUS_PORT=8080
+ENV SISYPHUS_REPOSITORY=cli
+ENV SISYPHUS_STATIC_DIR=/app/static
+ENV SISYPHUS_LOG_FORMAT=json
 
 RUN apt-get -o Acquire::Retries=5 update \
     && apt-get install -y --no-install-recommends \
@@ -58,13 +85,18 @@ RUN apt-get -o Acquire::Retries=5 update \
     && chown -R 1000:1000 /app /config /data
 
 COPY --from=taskwarrior-build /usr/local/ /usr/local/
-COPY *.py entrypoint.sh /app/
-COPY static/ /app/static/
+COPY --from=backend-build /opt/venv /opt/venv
+COPY --from=frontend-build /src/frontend/dist/ /app/static/
+COPY config/boards.yaml /app/boards.default.yaml
+COPY entrypoint.sh /app/entrypoint.sh
 
 RUN chmod 0755 /app/entrypoint.sh \
     && chown -R 1000:1000 /app
 
 USER 1000:1000
 EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
+    CMD ["python3", "-c", "import urllib.request,os;urllib.request.urlopen(f\"http://127.0.0.1:{os.environ.get('SISYPHUS_PORT','8080')}/api/v1/health\", timeout=4)"]
 
 ENTRYPOINT ["/app/entrypoint.sh"]

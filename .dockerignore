@@ -1,3 +1,9 @@
-__pycache__/
-*.pyc
-.DS_Store
+.git
+.venv
+**/node_modules
+**/dist
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+tests
+docs

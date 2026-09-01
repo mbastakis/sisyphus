@@ -2,8 +2,7 @@
   "name": "sisyphus-browser-tests",
   "private": true,
   "scripts": {
-    "test": "playwright test tests/taskboard.spec.mjs",
-    "test:live": "playwright test tests/live.spec.mjs"
+    "test": "playwright test"
   },
   "devDependencies": {
     "@playwright/test": "1.61.1"

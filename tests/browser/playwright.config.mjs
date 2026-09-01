@@ -1,36 +1,42 @@
 import { defineConfig, devices } from "@playwright/test";
-import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import path from "node:path";
 
-const testRoot = dirname(fileURLToPath(import.meta.url));
-const appRoot = resolve(testRoot, "../..");
-const liveBaseUrl = process.env.TASKBOARD_BASE_URL;
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 
+// E2E against the production-style single server: FastAPI serves the built
+// frontend (frontend/dist) plus the API, with the fake in-memory repository —
+// the real Taskwarrior replica is never touched. Run `task build:frontend`
+// (or `npm --prefix frontend run build`) before `npm test`.
 export default defineConfig({
-  testDir: "./tests",
-  fullyParallel: false,
+  testDir: "tests",
+  timeout: 60_000,
+  retries: 0,
   workers: 1,
-  reporter: "line",
+  fullyParallel: false,
   use: {
-    baseURL: liveBaseUrl || "http://127.0.0.1:43917",
-    trace: "retain-on-failure",
-    screenshot: "only-on-failure",
+    baseURL: "http://127.0.0.1:8423",
   },
   projects: [
+    { name: "desktop", use: { ...devices["Desktop Chrome"] }, grepInvert: /@mobile/ },
     {
-      name: "chromium",
-      use: { ...devices["Desktop Chrome"] },
+      name: "mobile",
+      use: { ...devices["iPhone 13"], browserName: "chromium" },
+      grep: /@mobile/,
     },
   ],
-  webServer: liveBaseUrl ? undefined : {
-    command: "python3 taskboard.py",
-    cwd: appRoot,
-    env: {
-      TASKBOARD_ALLOW_NO_AUTH: "1",
-      TASKBOARD_HOST: "127.0.0.1",
-      TASKBOARD_PORT: "43917",
-    },
-    port: 43917,
+  webServer: {
+    command:
+      "uv run --project backend uvicorn sisyphus.main:app --host 127.0.0.1 --port 8423",
+    cwd: root,
+    url: "http://127.0.0.1:8423/api/v1/health",
     reuseExistingServer: false,
+    timeout: 30_000,
+    env: {
+      SISYPHUS_REPOSITORY: "fake",
+      SISYPHUS_AUTH: "none",
+      SISYPHUS_CONFIG: path.join(root, "config", "boards.yaml"),
+      SISYPHUS_STATIC_DIR: path.join(root, "frontend", "dist"),
+    },
   },
 });

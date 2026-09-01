@@ -1,0 +1,84 @@
+version: 1
+
+boards:
+  - id: lifecycle
+    name: Lifecycle
+    description: All active work by Taskwarrior lifecycle
+    template: lifecycle
+    scope:
+      filter: status:pending or status:waiting or status:completed
+      completed_days: 14
+    ordering:
+      mode: manual
+      rank_uda: sisyphus_rank_lifecycle
+      fallback:
+        - urgency: desc
+        - entry: asc
+    mobile:
+      default_column: doing
+    columns:
+      - id: backlog
+        name: Backlog
+        match: { preset: backlog }
+        write: { preset: backlog }
+      - id: ready
+        name: Ready
+        match: { preset: ready }
+        write: { preset: ready }
+      - id: doing
+        name: Doing
+        match: { preset: doing }
+        write: { preset: doing }
+        wip_limit: 3
+      - id: waiting
+        name: Waiting
+        match: { preset: waiting }
+        write: { preset: waiting }
+      - id: done
+        name: Done
+        match: { preset: done }
+        write: { preset: done }
+
+  - id: project-home
+    name: Home
+    description: Lifecycle board scoped to the home project subtree
+    template: project-lifecycle
+    scope:
+      project: home
+      include_descendants: true
+      completed_days: 14
+    ordering:
+      mode: manual
+      rank_uda: sisyphus_rank_project_home
+
+  - id: daily
+    name: Daily
+    description: Time-focused view of pending work
+    template: daily
+    scope:
+      filter: status:pending or status:waiting
+    ordering:
+      mode: computed
+      by:
+        - due: asc
+        - urgency: desc
+    columns:
+      - id: overdue
+        name: Overdue
+        match: { filter: "due.before:today" }
+        write: null
+      - id: today
+        name: Today
+        match: { filter: "due:today" }
+        write:
+          set: { due: today }
+      - id: upcoming
+        name: Upcoming
+        match: { filter: "due.after:today" }
+        write:
+          prompt: { field: due, input: date }
+      - id: no-date
+        name: No date
+        match: { filter: "due.none:" }
+        write:
+          clear: [due]

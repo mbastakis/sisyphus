@@ -1,37 +1,56 @@
 # Sisyphus
 
-Sisyphus is a private Kanban UI over Taskwarrior 3.x. Taskwarrior remains the source of truth; Sisyphus serves the browser application, projects Taskwarrior records into board columns, and translates UI actions into UUID-targeted Taskwarrior commands.
+A personal, Kanban-first PWA over Taskwarrior. Taskwarrior stays the canonical
+system of record; Sisyphus adds a board-oriented HTTP API (FastAPI) and a
+keyboard-driven React frontend themed with Nocturne Rose.
 
-The production deployment identifier and environment variable prefix remain `taskboard`.
+See `docs/architecture-plan.md` for the full architecture and
+`docs/deployment.md` for the environment-variable table.
 
-## Repository Layout
+## Layout
 
-- `taskboard.py` - HTTP server, static routes, and JSON API
-- `taskboard_board.py` - Taskwarrior-to-board projection
-- `taskboard_runtime.py` - Taskwarrior execution and synchronization state
-- `taskboard_service.py` - task mutations and optimistic concurrency
-- `taskboard_validation.py` - request and environment validation
-- `static/` - browser application and PWA assets
-- `tests/` - Python unit and real-Taskwarrior integration tests
-- `tests/browser/` - mocked and live-contract Playwright tests
-- `docs/taskboard.md` - application behavior and model
-
-## Local Tests
-
-```bash
-mise exec -- task validate
+```
+backend/    FastAPI app (uv, src-layout `sisyphus` package)
+frontend/   React + TypeScript + Vite PWA
+config/     boards.yaml — server-side board definitions
+tests/      browser/ — Playwright e2e (runs against fake data)
+docs/       architecture plan, deployment reference
 ```
 
-The Python integration test requires Taskwarrior 3.x. Browser dependencies and Chromium are installed from the locked Playwright package before browser tests run.
+## Development (safe by default)
 
-## Container
-
-The repository root is the Docker build context:
+Development runs against an in-memory **fake** repository seeded with sample
+tasks — your real Taskwarrior replica is never touched. The topbar shows a
+`FAKE DATA` badge as a reminder.
 
 ```bash
-docker build -t sisyphus:local .
+task dev:backend    # uvicorn on 127.0.0.1:8422 (fake data, hot reload)
+task dev:frontend   # Vite on http://localhost:5173 (proxies /api)
 ```
 
-At runtime, the image expects Taskwarrior configuration under `/config`, replica data under `/data`, and the TaskChampion encryption secret in `TASKBOARD_TASKCHAMPION_ENCRYPTION_SECRET`. See `entrypoint.sh` for the complete environment contract.
+Talking to a real replica requires three explicit opt-ins:
+`SISYPHUS_REPOSITORY=cli`, `SISYPHUS_TASKDATA`, and `SISYPHUS_TASKRC`
+(plus `TZ` and `SISYPHUS_AUTH`). The backend refuses to guess any of them.
 
-Deployment, reverse proxy, authentication, DNS, secret injection, and TaskChampion server lifecycle are owned by the consuming infrastructure repository.
+## Tests and checks
+
+```bash
+task test:backend     # backend unit + API tests
+task test:e2e         # Playwright e2e against a production-style server (fake data)
+task validate         # lint + typecheck + config check + all tests
+task config:validate  # validate config/boards.yaml only
+```
+
+First e2e run: `task e2e:sync` installs Playwright and Chromium.
+
+## Production
+
+`task build:image` builds a multi-stage container: Node builds the frontend,
+uv installs the backend, Taskwarrior 3.4.2 is compiled and pinned, and FastAPI
+serves both the API and the built frontend on port 8080.
+
+The entrypoint refuses to start without explicit `TZ`, `SISYPHUS_AUTH`, and
+(for sync) `TASK_SYNC_ENCRYPTION_SECRET` + `TASK_SYNC_CLIENT_ID`. Mount
+`/config` (boards.yaml, generated taskrc) and `/data` (the replica). Rank UDA
+declarations for every configured board are generated into the taskrc at
+startup. Do not run more than one instance against the same `/data`.

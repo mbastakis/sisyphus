@@ -1,42 +1,77 @@
 version: "3"
 
 tasks:
-  python:test:
-    desc: Run Python unit and integration tests
+  dev:backend:
+    desc: Run the backend with fake in-memory data (never touches real Taskwarrior)
+    dir: backend
+    env:
+      SISYPHUS_REPOSITORY: fake
+      SISYPHUS_AUTH: none
+      SISYPHUS_CONFIG: "{{.TASKFILE_DIR}}/config/boards.yaml"
     cmds:
-      - uv run --offline --locked pytest
+      - uv run uvicorn sisyphus.main:app --host 127.0.0.1 --port 8422 --reload
 
-  python:lint:
-    desc: Run Python lint checks
+  dev:frontend:
+    desc: Run the frontend dev server (proxies /api to :8422)
     cmds:
-      - uv run --offline --locked ruff check .
+      - npm --prefix frontend run dev
 
-  browser:sync:
-    desc: Install locked browser-test dependencies and Chromium
+  test:backend:
+    desc: Run backend unit and API tests
+    dir: backend
+    cmds:
+      - uv run pytest
+
+  lint:
+    desc: Lint the backend
+    dir: backend
+    cmds:
+      - uv run --with ruff ruff check src tests
+
+  typecheck:
+    desc: Typecheck the frontend
+    cmds:
+      - npm --prefix frontend exec -- tsc --noEmit
+
+  config:validate:
+    desc: Validate config/boards.yaml
+    dir: backend
+    cmds:
+      - uv run python -m sisyphus.config.check "{{.TASKFILE_DIR}}/config/boards.yaml"
+
+  build:frontend:
+    desc: Build the production frontend bundle (frontend/dist)
+    cmds:
+      - npm --prefix frontend run build
+
+  build:image:
+    desc: Build the production container image
+    cmds:
+      - docker build -t sisyphus .
+
+  e2e:sync:
+    desc: Install browser-test dependencies and Chromium
     cmds:
       - npm --prefix tests/browser ci
       - npm --prefix tests/browser exec -- playwright install chromium
 
-  browser:test:
-    desc: Run mocked browser regressions
+  test:e2e:
+    desc: Run end-to-end browser tests against a production-style server (fake data)
     deps:
-      - browser:sync
+      - build:frontend
     cmds:
       - npm --prefix tests/browser test
 
   test:
-    desc: Run all Sisyphus tests
-    deps:
-      - browser:sync
+    desc: Run all tests
     cmds:
-      - uv run --offline --locked pytest
-      - npm --prefix tests/browser test
+      - task: test:backend
+      - task: test:e2e
 
   validate:
-    desc: Run lint and tests
-    deps:
-      - browser:sync
+    desc: Lint, typecheck, validate config, and run all tests
     cmds:
-      - uv run --offline --locked ruff check .
-      - uv run --offline --locked pytest
-      - npm --prefix tests/browser test
+      - task: lint
+      - task: typecheck
+      - task: config:validate
+      - task: test
