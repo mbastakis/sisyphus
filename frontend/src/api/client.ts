@@ -15,6 +15,8 @@ export class ApiError extends Error {
   }
 }
 
+let reauthStarted = false;
+
 export async function api<T>(
   path: string,
   options: { method?: string; body?: unknown } = {},
@@ -23,7 +25,21 @@ export async function api<T>(
     method: options.method ?? "GET",
     headers: options.body !== undefined ? { "Content-Type": "application/json" } : undefined,
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    // The API never redirects, so any redirect is an auth boundary (e.g.
+    // Authentik forward-auth session expiry) sending us to a cross-origin
+    // login page that fetch() cannot follow. Detect it and re-enter the
+    // login flow with a full navigation instead of surfacing a CORS error.
+    redirect: "manual",
   });
+  if (res.type === "opaqueredirect") {
+    if (!reauthStarted && navigator.onLine) {
+      reauthStarted = true;
+      window.location.assign(
+        "/outpost.goauthentik.io/start?rd=" + encodeURIComponent(window.location.href),
+      );
+    }
+    throw new ApiError(401, { code: "unauthorized", message: "Signing in again…" });
+  }
   const text = await res.text();
   let json: Record<string, unknown> = {};
   if (text) {

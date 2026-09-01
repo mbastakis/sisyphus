@@ -31,8 +31,12 @@ export default defineConfig({
         // intercepted or cached: the app layer keeps its own last-projection
         // cache with an explicit staleness timestamp, so the SW can never
         // present stale task data as fresh.
+        // /outpost.goauthentik.io must reach the network: when the app sits
+        // behind Authentik forward-auth, the login callback is a navigation
+        // to that path — serving the shell instead would trap the user in a
+        // login loop.
         navigateFallback: "/index.html",
-        navigateFallbackDenylist: [/^\/api\//],
+        navigateFallbackDenylist: [/^\/api\//, /^\/outpost\.goauthentik\.io\//],
       },
     }),
   ],
