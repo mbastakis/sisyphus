@@ -1,0 +1,14 @@
+{
+  "name": "@nocturne-rose/sisyphus",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "default": "./index.js"
+    },
+    "./theme.css": "./theme.css",
+    "./tokens.json": "./tokens.json"
+  }
+}

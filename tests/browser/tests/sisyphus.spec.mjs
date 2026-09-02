@@ -1,4 +1,9 @@
+import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
+
+const theme = JSON.parse(
+  readFileSync(new URL("../../../frontend/vendor/nocturne-rose/tokens.json", import.meta.url), "utf8"),
+);
 
 // The webServer seeds a fresh fake repository per run; tests run serially
 // against shared state and each uses its own task where they mutate.
@@ -28,7 +33,15 @@ test("PWA shell: manifest and service worker are served", async ({ page, request
   expect(manifestHref).toBeTruthy();
   const manifest = await request.get(manifestHref);
   expect(manifest.ok()).toBeTruthy();
-  expect((await manifest.json()).name).toBe("Sisyphus");
+  const manifestJson = await manifest.json();
+  expect(manifestJson.name).toBe("Sisyphus");
+  expect(manifestJson.background_color).toBe(theme.canvas);
+  expect(manifestJson.theme_color).toBe(theme.canvas);
+  await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute("content", theme.canvas);
+  for (const icon of manifestJson.icons) {
+    expect((await request.get(icon.src)).ok()).toBeTruthy();
+  }
+  expect((await request.get("/icons/apple-touch-icon.png")).ok()).toBeTruthy();
   const sw = await request.get("/sw.js");
   expect(sw.ok()).toBeTruthy();
 });

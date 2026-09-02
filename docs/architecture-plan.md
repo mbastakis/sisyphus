@@ -115,7 +115,7 @@ The PWA caches the application shell and the last successfully loaded Board for 
 
 ### Theme
 
-Sisyphus vendors semantic Nocturne Rose tokens copied from the canonical dotfiles palette. The application does not depend on the dotfiles repository at build or runtime.
+Sisyphus vendors a generated semantic package from the canonical `mbastakis/nocturne-rose` palette repository. The committed snapshot keeps builds independent of sibling repositories and is refreshed explicitly with `task theme:sync`.
 
 The initial source palette is:
 
@@ -1141,7 +1141,7 @@ The rules that follow, enforced in review:
 
 ### Palette provenance
 
-Add a comment recording that the values are vendored from the dotfiles `.chezmoidata.yaml` Nocturne Rose palette and the date or source revision of the snapshot. Updating Sisyphus tokens is an intentional project change, not an automatic runtime dependency.
+Vendor the generated Sisyphus package from the canonical `mbastakis/nocturne-rose` repository. Updating the committed package remains an intentional project change, not an automatic runtime dependency.
 
 One intentional extension is on the table: a brightened danger variant (a salmon-shifted red) for small danger text on raised surfaces, because the vendored red sits below 4.5:1 there. Decide during Phase 4 whether to add it to the canonical palette or live with the icon-plus-neutral-text rule.
 

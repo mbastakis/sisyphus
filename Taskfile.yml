@@ -31,7 +31,19 @@ tasks:
   typecheck:
     desc: Typecheck the frontend
     cmds:
-      - npm --prefix frontend exec -- tsc --noEmit
+      - npm --prefix frontend run build
+
+  theme:sync:
+    desc: Refresh the generated Nocturne Rose package and icons from the sibling repository
+    cmds:
+      - scripts/sync-nocturne-rose.sh
+      - npm --prefix frontend run icons:generate
+
+  theme:check:
+    desc: Verify the generated Nocturne Rose package and icons are current
+    cmds:
+      - scripts/sync-nocturne-rose.sh --check
+      - npm --prefix frontend run icons:check
 
   config:validate:
     desc: Validate config/boards.yaml
@@ -71,6 +83,7 @@ tasks:
   validate:
     desc: Lint, typecheck, validate config, and run all tests
     cmds:
+      - task: theme:check
       - task: lint
       - task: typecheck
       - task: config:validate

@@ -1,0 +1,22 @@
+export declare const sisyphus: Readonly<{
+  canvas: `#${string}`;
+  shell: `#${string}`;
+  surfaceCard: `#${string}`;
+  surfaceRaised: `#${string}`;
+  surfaceActive: `#${string}`;
+  borderSubtle: `#${string}`;
+  borderStrong: `#${string}`;
+  textPrimary: `#${string}`;
+  textSecondary: `#${string}`;
+  textMuted: `#${string}`;
+  textDisabled: `#${string}`;
+  accent: `#${string}`;
+  accentStrong: `#${string}`;
+  accentSubtle: `#${string}`;
+  onAccent: `#${string}`;
+  statusInfo: `#${string}`;
+  statusSuccess: `#${string}`;
+  statusWarning: `#${string}`;
+  statusDanger: `#${string}`;
+}>;
+export default sisyphus;

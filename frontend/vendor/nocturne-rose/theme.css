@@ -1,35 +1,23 @@
-/* Nocturne Rose — vendored from dotfiles .chezmoidata.yaml palette, snapshot 2026-09-01.
-   Updating these values is an intentional project change, not a runtime dependency. */
-
+/* Code generated from Nocturne Rose. DO NOT EDIT. */
 :root {
   color-scheme: dark;
-
-  /* Surfaces — elevation is a lighter surface plus a hairline, never a shadow */
   --canvas: #0d0d10;
   --shell: #121217;
   --surface-card: #18181f;
   --surface-raised: #22222c;
   --surface-active: #30303d;
-
-  /* Hairlines */
   --border-subtle: #22222c;
   --border-strong: #30303d;
-
-  /* Text */
   --text-primary: #ebe7ed;
   --text-secondary: #aaa5b0;
-  --text-muted: #77727f; /* large text and glyphs only */
-  --text-disabled: #504c57; /* disabled controls only, never content */
-
-  /* Accent — Rose */
+  --text-muted: #77727f;
+  --text-disabled: #504c57;
   --accent: #d48aa4;
   --accent-strong: #e3a0b8;
-  --accent-subtle: #7c4659; /* backgrounds and borders only, never text */
+  --accent-subtle: #7c4659;
   --accent-tint: color-mix(in srgb, #d48aa4 12%, #18181f);
   --on-accent: #09090b;
   --focus-ring: #d48aa4;
-
-  /* Status */
   --status-info: #88a8bd;
   --status-success: #8aa47f;
   --status-warning: #d3b069;
@@ -38,23 +26,15 @@
   --status-success-tint: color-mix(in srgb, #8aa47f 12%, #18181f);
   --status-warning-tint: color-mix(in srgb, #d3b069 12%, #18181f);
   --status-danger-tint: color-mix(in srgb, #cc655c 12%, #18181f);
-
-  /* Due-state semantics */
   --due-overdue: var(--status-danger);
   --due-today: var(--status-warning);
   --due-upcoming: var(--text-secondary);
-
-  /* Shadow — floating layers only */
   --shadow-overlay: 0 8px 24px rgb(0 0 0 / 0.5);
-
-  /* Motion */
   --motion-fast: 120ms;
   --motion-base: 200ms;
   --motion-overlay: 250ms;
   --ease-out: cubic-bezier(0.32, 0.72, 0, 1);
   --ease-spring: cubic-bezier(0.15, 1, 0.3, 1);
-
-  /* Type */
   --font-ui: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: ui-monospace, "SF Mono", monospace;
 }

@@ -49,6 +49,7 @@ RUN curl -fsSLO "https://github.com/GothenburgBitFactory/taskwarrior/releases/do
 FROM docker.io/library/node:22-slim AS frontend-build
 WORKDIR /src/frontend
 COPY frontend/package.json frontend/package-lock.json ./
+COPY frontend/vendor/nocturne-rose/ ./vendor/nocturne-rose/
 RUN npm ci
 COPY frontend/ ./
 RUN npm run build
