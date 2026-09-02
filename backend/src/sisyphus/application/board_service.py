@@ -154,6 +154,7 @@ class BoardService:
                 }
             )
         last_sync = getattr(self.repo, "last_sync", None)
+        sync_detail = getattr(self.repo, "sync_detail", None)
         return {
             "board": {
                 "id": board.id,
@@ -167,9 +168,9 @@ class BoardService:
             "generated_at": datetime.now(UTC).isoformat(),
             "server_timezone": str(server_timezone()),
             "sync": {
-                "status": "synced" if last_sync else "unknown",
+                "status": "degraded" if sync_detail else "synced" if last_sync else "unknown",
                 "last_success": last_sync.isoformat() if last_sync else None,
-                "detail": None,
+                "detail": sync_detail,
             },
             "unmapped": unmapped,
             "columns": columns,

@@ -16,6 +16,7 @@
 | `SISYPHUS_HOST` / `SISYPHUS_PORT` | no | `0.0.0.0` / `8080` | Bind address (container). |
 | `SISYPHUS_LOG_FORMAT` | no | dev: `plain`; container: `json` | `json` emits one structured object per line with request IDs. |
 | `SISYPHUS_LOG_LEVEL` | no | `INFO` | Log level. |
+| `SISYPHUS_SYNC_INTERVAL_SECONDS` | no | `30` | Background TaskChampion reconciliation interval. Reads remain local; successful imports notify connected browsers over SSE. |
 | `SISYPHUS_CONFIG_DIR` / `SISYPHUS_DATA` | no | `/config` / `/data` | Container durable paths. |
 | `TASK_SYNC_ENCRYPTION_SECRET` | container `cli`: yes* | — | TaskChampion sync encryption secret. *Or set `TASK_SYNC_DISABLED=1`. |
 | `TASK_SYNC_CLIENT_ID` | with sync | — | TaskChampion client id. |
@@ -34,6 +35,7 @@
 ## Operational notes
 
 - One backend process per replica: never scale horizontally over one `/data`.
+- The backend owns synchronization: it reconciles the Atlas replica in the background and wakes immediately after local mutations. The frontend does not poll boards; it listens for task-generation events over `/api/v1/events` and refetches only when state changes.
 - `/api/v1/health` is unauthenticated for probes; everything else is guarded.
 - Backup = the `/config` and `/data` volumes. Restore by mounting them into a
   new container; the replica syncs against TaskChampion normally afterwards.

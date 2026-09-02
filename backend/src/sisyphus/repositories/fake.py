@@ -41,6 +41,10 @@ class FakeTaskRepository:
     def last_sync(self) -> datetime | None:
         return self._last_sync
 
+    @property
+    def sync_detail(self) -> str | None:
+        return None
+
     def query(self, filter: TaskFilter) -> list[Task]:
         with self._lock:
             out = []

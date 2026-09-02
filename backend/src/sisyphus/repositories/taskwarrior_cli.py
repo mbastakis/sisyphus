@@ -46,6 +46,10 @@ class TaskwarriorCliRepository:
     def last_sync(self) -> datetime | None:
         return self._last_sync
 
+    @property
+    def sync_detail(self) -> str | None:
+        return self._sync_detail
+
     def _run(self, args: list[str], allow_fail: bool = False) -> subprocess.CompletedProcess:
         base = [
             "task",
@@ -73,15 +77,27 @@ class TaskwarriorCliRepository:
 
     def sync(self) -> SyncResult:
         with self._lock:
+            before = self._snapshot()
             proc = self._run(["sync"], allow_fail=True)
             ok = proc.returncode == 0
             now = datetime.now(UTC)
             if ok:
                 self._last_sync = now
                 self._sync_detail = None
+                if self._snapshot() != before:
+                    self.generation += 1
             else:
                 self._sync_detail = proc.stderr.strip()[:400] or "sync failed"
             return SyncResult(ok=ok, at=now if ok else self._last_sync, detail=self._sync_detail)
+
+    def _snapshot(self) -> str:
+        proc = self._run(["status.not:deleted", "export"])
+        rows = json.loads(proc.stdout or "[]")
+        for row in rows:
+            row.pop("id", None)
+            row.pop("urgency", None)
+        rows.sort(key=lambda row: row.get("uuid", ""))
+        return json.dumps(rows, sort_keys=True, separators=(",", ":"))
 
     def query(self, filter: TaskFilter) -> list[Task]:
         with self._lock:

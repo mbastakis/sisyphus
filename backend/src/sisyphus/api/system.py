@@ -20,6 +20,7 @@ def health():
 def system(request: Request):
     repo = request.app.state.repo
     last_sync = getattr(repo, "last_sync", None)
+    sync_detail = getattr(repo, "sync_detail", None)
     return {
         "version": __version__,
         "repository": os.environ.get("SISYPHUS_REPOSITORY", "fake"),
@@ -29,15 +30,16 @@ def system(request: Request):
             (datetime.now(server_timezone()).utcoffset() or timedelta()).total_seconds() // 60
         ),
         "sync": {
-            "status": "synced" if last_sync else "unknown",
+            "status": "degraded" if sync_detail else "synced" if last_sync else "unknown",
             "last_success": last_sync.isoformat() if last_sync else None,
+            "detail": sync_detail,
         },
     }
 
 
 @router.post("/sync")
-def sync(request: Request):
-    result = request.app.state.repo.sync()
+async def sync(request: Request):
+    result = await request.app.state.sync_coordinator.sync_now()
     return {
         "ok": result.ok,
         "detail": result.detail,

@@ -78,5 +78,5 @@ export interface SystemInfo {
   config_version: number;
   server_timezone: string;
   utc_offset_minutes: number;
-  sync: { status: string; last_success: string | null };
+  sync: SyncState;
 }

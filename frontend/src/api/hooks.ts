@@ -25,7 +25,6 @@ export function useBoard(boardId: string | null) {
     // (BoardPage) marks it stale whenever the live fetch is failing.
     placeholderData: () =>
       boardId ? loadProjectionCache(boardId)?.projection : undefined,
-    refetchInterval: 30_000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
   });

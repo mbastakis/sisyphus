@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { subscribeToTaskChanges } from "../api/events";
 import { useBoards } from "../api/hooks";
 import { BoardPage } from "../boards/BoardPage";
 import { ToastProvider } from "../components/Toasts";
@@ -12,6 +13,8 @@ const queryClient = new QueryClient({
 
 function BoardChooser() {
   const boards = useBoards();
+
+  useEffect(() => subscribeToTaskChanges(queryClient), []);
   const [boardId, setBoardId] = useState<string | null>(
     () => localStorage.getItem("sisyphus.lastBoard"),
   );
