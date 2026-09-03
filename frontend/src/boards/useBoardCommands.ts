@@ -13,6 +13,9 @@ interface CommandDeps {
   requestMove: (card: Card, toColumn: string) => void;
   onSelectBoard: (id: string) => void;
   openDrawer: (uuid: string, edit: boolean) => void;
+  syncNow: () => void;
+  syncing: boolean;
+  online: boolean;
   openCreate: () => void;
   openHelp: () => void;
 }
@@ -29,6 +32,9 @@ export function useBoardCommands({
   requestMove,
   onSelectBoard,
   openDrawer,
+  syncNow,
+  syncing,
+  online,
   openCreate,
   openHelp,
 }: CommandDeps): Command[] {
@@ -135,6 +141,14 @@ export function useBoardCommands({
       run: () => void actions.runUndo(),
     });
     list.push({
+      id: "sync",
+      name: syncing ? "Syncing with TaskChampion…" : "Sync with TaskChampion",
+      aliases: ["sync", "refresh", "full sync", "taskchampion"],
+      section: "global",
+      enabled: online && !syncing,
+      run: syncNow,
+    });
+    list.push({
       id: "help",
       name: "Keyboard shortcuts",
       aliases: ["help", "keys"],
@@ -154,6 +168,9 @@ export function useBoardCommands({
     requestMove,
     onSelectBoard,
     openDrawer,
+    syncNow,
+    syncing,
+    online,
     openCreate,
     openHelp,
   ]);

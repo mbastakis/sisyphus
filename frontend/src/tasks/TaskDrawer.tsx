@@ -6,6 +6,8 @@ import { shortDateTime, toDateInputValue } from "../lib/dates";
 interface Props {
   card: Card;
   actions: BoardActions;
+  /** Known project names for autocomplete. */
+  projects: string[];
   initialEdit?: boolean;
   onClose: () => void;
 }
@@ -13,7 +15,6 @@ interface Props {
 interface Draft {
   description: string;
   project: string;
-  tags: string;
   priority: string;
   due: string;
   wait: string;
@@ -24,7 +25,6 @@ function toDraft(card: Card): Draft {
   return {
     description: card.description,
     project: card.project ?? "",
-    tags: card.tags.join(", "),
     priority: card.priority ?? "",
     due: toDateInputValue(card.due),
     wait: toDateInputValue(card.wait),
@@ -32,7 +32,7 @@ function toDraft(card: Card): Draft {
   };
 }
 
-export function TaskDrawer({ card, actions, initialEdit, onClose }: Props) {
+export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Props) {
   const [editing, setEditing] = useState(initialEdit ?? false);
   const [draft, setDraft] = useState<Draft>(() => toDraft(card));
   const [annotation, setAnnotation] = useState("");
@@ -67,13 +67,6 @@ export function TaskDrawer({ card, actions, initialEdit, onClose }: Props) {
     if (draft.priority !== clean.priority) {
       changes.priority = draft.priority || null;
       prev.priority = card.priority;
-    }
-    if (draft.tags !== clean.tags) {
-      changes.tags = draft.tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean);
-      prev.tags = card.tags;
     }
     for (const f of ["due", "wait", "scheduled"] as const) {
       if (draft[f] !== clean[f]) {
@@ -145,7 +138,14 @@ export function TaskDrawer({ card, actions, initialEdit, onClose }: Props) {
                 <input
                   value={draft.project}
                   onChange={(e) => setDraft({ ...draft, project: e.target.value })}
+                  list="sisyphus-projects-drawer"
+                  autoComplete="off"
                 />
+                <datalist id="sisyphus-projects-drawer">
+                  {projects.map((p) => (
+                    <option key={p} value={p} />
+                  ))}
+                </datalist>
               </label>
               <label className="field">
                 <span>Priority</span>
@@ -160,13 +160,6 @@ export function TaskDrawer({ card, actions, initialEdit, onClose }: Props) {
                 </select>
               </label>
             </div>
-            <label className="field">
-              <span>Tags (comma separated)</span>
-              <input
-                value={draft.tags}
-                onChange={(e) => setDraft({ ...draft, tags: e.target.value })}
-              />
-            </label>
             <div className="field-row">
               <label className="field">
                 <span>Due</span>
@@ -222,12 +215,6 @@ export function TaskDrawer({ card, actions, initialEdit, onClose }: Props) {
                 <>
                   <dt>Priority</dt>
                   <dd>{{ H: "High", M: "Medium", L: "Low" }[card.priority]}</dd>
-                </>
-              )}
-              {card.tags.length > 0 && (
-                <>
-                  <dt>Tags</dt>
-                  <dd>{card.tags.map((t) => `#${t}`).join("  ")}</dd>
                 </>
               )}
               {card.due && (
@@ -343,6 +330,12 @@ export function TaskDrawer({ card, actions, initialEdit, onClose }: Props) {
               <>
                 <dt>depends</dt>
                 <dd>{card.depends.join(", ")}</dd>
+              </>
+            )}
+            {card.tags.length > 0 && (
+              <>
+                <dt>tags</dt>
+                <dd title="Board-managed; not editable here">{card.tags.join(" ")}</dd>
               </>
             )}
             {Object.entries(card.udas).map(([k, v]) => (

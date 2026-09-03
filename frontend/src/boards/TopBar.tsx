@@ -21,6 +21,8 @@ interface TopBarProps {
   sortMenuOpen: boolean;
   onToggleSortMenu: () => void;
   onSelectSort: (mode: SortMode) => void;
+  syncing: boolean;
+  onSync: () => void;
   onCreate: () => void;
   onHelp: () => void;
 }
@@ -43,6 +45,8 @@ export function TopBar({
   sortMenuOpen,
   onToggleSortMenu,
   onSelectSort,
+  syncing,
+  onSync,
   onCreate,
   onHelp,
 }: TopBarProps) {
@@ -59,18 +63,42 @@ export function TopBar({
       </button>
       {switcherOpen && (
         <div className="switcher-menu" role="listbox">
-          {(boards ?? []).map((b) => (
-            <button
-              key={b.id}
-              role="option"
-              aria-selected={b.id === boardId}
-              className={b.id === boardId ? "switcher-current" : ""}
-              onClick={() => onSelectBoard(b.id)}
-            >
-              <span>{b.name}</span>
-              {b.description && <small>{b.description}</small>}
-            </button>
-          ))}
+          {(boards ?? [])
+            .filter((b) => b.kind !== "project")
+            .map((b) => (
+              <button
+                key={b.id}
+                role="option"
+                aria-selected={b.id === boardId}
+                className={b.id === boardId ? "switcher-current" : ""}
+                onClick={() => onSelectBoard(b.id)}
+              >
+                <span>{b.name}</span>
+                {b.description && <small>{b.description}</small>}
+              </button>
+            ))}
+          {(boards ?? []).some((b) => b.kind === "project") && (
+            <div className="switcher-section">Projects</div>
+          )}
+          {(boards ?? [])
+            .filter((b) => b.kind === "project")
+            .map((b) => (
+              <button
+                key={b.id}
+                role="option"
+                aria-selected={b.id === boardId}
+                className={`switcher-project ${b.id === boardId ? "switcher-current" : ""}`}
+                title={b.project ?? b.name}
+                onClick={() => onSelectBoard(b.id)}
+              >
+                <span className="switcher-project-row">
+                  <span>{b.project ?? b.name}</span>
+                  {b.open_count !== null && (
+                    <small className="tnum switcher-count">{b.open_count}</small>
+                  )}
+                </span>
+              </button>
+            ))}
         </div>
       )}
       <input
@@ -127,6 +155,15 @@ export function TopBar({
         online={online}
         degraded={sync?.status === "degraded"}
       />
+      <button
+        className={`btn-icon sync-button ${syncing ? "sync-button-active" : ""}`}
+        title={online ? "Sync with TaskChampion now" : "Offline — sync unavailable"}
+        aria-label="Sync with TaskChampion now"
+        onClick={onSync}
+        disabled={!online || syncing}
+      >
+        ↻
+      </button>
       <button
         className="btn-primary topbar-create"
         onClick={onCreate}

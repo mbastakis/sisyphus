@@ -48,6 +48,8 @@ export interface BoardMeta {
   ordering_mode: "manual" | "computed";
   mobile_default_column: string | null;
   ready_tag: string;
+  kind: "static" | "project";
+  project: string | null;
 }
 
 export interface SyncState {
@@ -70,6 +72,16 @@ export interface BoardSummary {
   id: string;
   name: string;
   description: string | null;
+  kind: "static" | "project";
+  project: string | null;
+  open_count: number | null;
+}
+
+/** Project names known to the server (one dynamic board each). */
+export function knownProjects(boards: BoardSummary[] | undefined): string[] {
+  return (boards ?? [])
+    .filter((b) => b.kind === "project" && b.project)
+    .map((b) => b.project as string);
 }
 
 export interface SystemInfo {

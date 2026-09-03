@@ -10,6 +10,16 @@ UDA_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 Preset = Literal["backlog", "ready", "doing", "waiting", "done"]
 
+# Board-managed lifecycle marker. Tasks carrying this tag sit in Ready; the
+# board adds/removes it as cards move. Matches the CLI convention (+next) so
+# both clients agree on what "prioritised for this week" means.
+DEFAULT_READY_TAG = "next"
+
+# Every dynamic per-project board shares one rank UDA. A task belongs to
+# exactly one project, so a single rank field is enough to order it there.
+PROJECT_RANK_UDA = "sisyphus_rank_project"
+PROJECT_BOARD_PREFIX = "project:"
+
 
 class ScopeConfig(BaseModel):
     filter: str | None = None
@@ -114,8 +124,12 @@ class BoardConfig(BaseModel):
     ordering: OrderingConfig = Field(default_factory=OrderingConfig)
     cards: CardsConfig = Field(default_factory=CardsConfig)
     mobile: MobileConfig = Field(default_factory=MobileConfig)
-    ready_tag: str = "ready"
+    ready_tag: str = DEFAULT_READY_TAG
     columns: list[ColumnConfig] = Field(default_factory=list)
+
+    @property
+    def is_project_board(self) -> bool:
+        return self.id.startswith(PROJECT_BOARD_PREFIX)
 
     @field_validator("id")
     @classmethod
@@ -167,6 +181,15 @@ class AppConfig(BaseModel):
     def _validate(self):
         if self.version != 1:
             raise ValueError("unsupported configuration version")
+        expected_boards = {"lifecycle", "daily"}
+        configured_boards = {board.id for board in self.boards}
+        if configured_boards != expected_boards or len(self.boards) != len(expected_boards):
+            raise ValueError(
+                "boards must contain exactly the built-in 'lifecycle' and 'daily' boards"
+            )
+        templates = {board.id: board.template for board in self.boards}
+        if templates != {"lifecycle": "lifecycle", "daily": "daily"}:
+            raise ValueError("lifecycle and daily boards must use their matching templates")
         ids: set[str] = set()
         udas: set[str] = set()
         for b in self.boards:
@@ -175,6 +198,10 @@ class AppConfig(BaseModel):
             ids.add(b.id)
             if b.ordering.mode == "manual":
                 uda = b.ordering.rank_uda
+                if uda == PROJECT_RANK_UDA:
+                    raise ValueError(
+                        f"rank_uda {uda!r} is reserved for dynamic project boards"
+                    )
                 if uda in udas:
                     raise ValueError(f"rank_uda {uda!r} is used by more than one board")
                 udas.add(uda)  # type: ignore[arg-type]
@@ -185,3 +212,43 @@ class AppConfig(BaseModel):
             if b.id == board_id:
                 return b
         return None
+
+    @property
+    def ready_tag(self) -> str:
+        """Lifecycle marker shared by dynamic project boards.
+
+        Project boards inherit it from the first static lifecycle board so a
+        task shows in Ready on both the global and the project board.
+        """
+        for b in self.boards:
+            if b.template in ("lifecycle", "project-lifecycle"):
+                return b.ready_tag
+        return DEFAULT_READY_TAG
+
+
+def project_board_id(project: str) -> str:
+    return PROJECT_BOARD_PREFIX + project
+
+
+def project_board(project: str, ready_tag: str, completed_days: int = 14) -> BoardConfig:
+    """Build the dynamic lifecycle board for one exact project.
+
+    Project names are not slugs, so this bypasses id validation on purpose;
+    everything else is a fully validated lifecycle template.
+    """
+    return BoardConfig.model_construct(
+        id=project_board_id(project),
+        name=project,
+        description=None,
+        template="project-lifecycle",
+        scope=ScopeConfig(project=project, include_descendants=False, completed_days=completed_days),
+        ordering=OrderingConfig(
+            mode="manual",
+            rank_uda=PROJECT_RANK_UDA,
+            fallback=[{"urgency": "desc"}, {"entry": "asc"}],
+        ),
+        cards=CardsConfig(),
+        mobile=MobileConfig(default_column="doing"),
+        ready_tag=ready_tag,
+        columns=_lifecycle_columns(),
+    )

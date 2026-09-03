@@ -9,7 +9,7 @@ Taskwarrior remains the canonical system of record. Sisyphus does not introduce 
 Sisyphus adds two things around that system of record:
 
 1. A stable product-specific HTTP API that translates Taskwarrior behavior into board-oriented operations.
-2. Multiple named Boards that present overlapping subsets of the same task universe using configurable scopes, columns, ordering, card fields, and write rules.
+2. Core Lifecycle and Daily Boards plus exact per-project Boards generated from the Task Universe.
 
 The product is intentionally:
 
@@ -21,7 +21,7 @@ The product is intentionally:
 - installable as a PWA;
 - read-only when the browser is offline;
 - themed with a vendored Nocturne Rose token set;
-- configured through a server-side YAML file;
+- configured through server-side YAML for the Lifecycle and Daily core Boards;
 - implemented as a cleanly separated React frontend and Python FastAPI backend.
 
 ## 2. Decisions Reached
@@ -74,15 +74,15 @@ Each Board defines:
 - mobile defaults;
 - optional rank UDA for persistent manual ordering.
 
-### Initial Board templates
+### Initial Boards
 
-The first release will support these presets through the generic configuration model:
+The first release has two core Boards and one generated Board kind:
 
 1. Lifecycle Board: Backlog, Ready, Doing, Waiting, Done.
-2. Project Lifecycle Board: the lifecycle mapping scoped to one Taskwarrior project or project subtree.
-3. Daily Board: Overdue, Today, Upcoming, No date.
+2. Daily Board: Overdue, Today, Upcoming, No date.
+3. Project Board: the lifecycle mapping scoped to one exact Taskwarrior project name, generated whenever tasks use that project.
 
-A Project Board means a lifecycle board scoped to a project. Projects-as-columns is not in the initial scope.
+Dotted projects remain exact values: a task in `work.sisyphus` generates that Board only, not a synthetic `work` ancestor Board. Projects-as-columns is not in the initial scope.
 
 ### Computed columns
 
@@ -105,9 +105,9 @@ Boards using computed ordering do not create rank metadata.
 
 ### Configuration
 
-Board definitions live in a server-side YAML file. The first release has no in-app Board editor. Configuration is hand-edited, validated at startup and through a CLI/check command, and returned read-only to the browser through the API.
+The Lifecycle and Daily Board definitions live in a server-side YAML file, which accepts exactly those two stable Board IDs. Project Boards are generated automatically from exact Taskwarrior project names and are not configurable. The first release has no in-app Board editor. Configuration is hand-edited, validated at startup and through a CLI/check command, and returned read-only to the browser through the API.
 
-Device-local presentation preferences may stay in browser storage. Task meaning, Board definitions, and shared saved views do not.
+Device-local presentation preferences may stay in browser storage. Task meaning, core Board definitions, and shared saved views do not.
 
 ### Offline behavior
 
@@ -417,16 +417,6 @@ boards:
           preset: done
         write:
           preset: done
-
-  - id: project-home
-    name: Home
-    template: project-lifecycle
-    scope:
-      project: home
-      include_descendants: true
-    ordering:
-      mode: manual
-      rank_uda: sisyphus_rank_project_home
 
   - id: daily
     name: Daily
@@ -1197,7 +1187,7 @@ Test without Taskwarrior subprocesses:
 - YAML parsing and schema validation;
 - Board ID and rank UDA rules;
 - lifecycle matching precedence;
-- project subtree scoping;
+- exact project Board generation and scoping;
 - daily computed columns;
 - read-only versus writable moves;
 - mutation-plan generation;

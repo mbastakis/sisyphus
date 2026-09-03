@@ -6,11 +6,13 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { api } from "../api/client";
 import { useBoard, useBoards, useSystem } from "../api/hooks";
 import { useOnline } from "../api/offline";
-import type { BoardColumnDto, Card } from "../api/types";
+import { knownProjects, type BoardColumnDto, type Card } from "../api/types";
 import { CommandPalette } from "../components/CommandPalette";
 import { KeyboardHelp } from "../components/KeyboardHelp";
+import { useToast } from "../components/Toasts";
 import { MoveMenu } from "../components/MoveMenu";
 import { PromptDialog } from "../components/PromptDialog";
 import { CreateDialog } from "../tasks/CreateDialog";
@@ -42,6 +44,7 @@ interface PendingPrompt {
 }
 
 export function BoardPage({ boardId, onSelectBoard }: Props) {
+  const toast = useToast();
   const boardsQuery = useBoards();
   const query = useBoard(boardId);
   const system = useSystem();
@@ -63,6 +66,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null);
   const [landedUuid, setLandedUuid] = useState<string | null>(null);
   const [showSkeleton, setShowSkeleton] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const searchRef = useRef<HTMLInputElement>(null);
   const landedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -96,8 +100,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
       return cards.filter(
         (c) =>
           c.description.toLowerCase().includes(q) ||
-          (c.project ?? "").toLowerCase().includes(q) ||
-          c.tags.some((t) => t.toLowerCase().includes(q)),
+          (c.project ?? "").toLowerCase().includes(q),
       );
     },
     [search],
@@ -258,19 +261,6 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
   );
 
   const focusedCard = focus.focusUuid ? cardsByUuid.get(focus.focusUuid) : undefined;
-  const commands = useBoardCommands({
-    focusedCard,
-    projection,
-    boards: boardsQuery.data,
-    boardId,
-    actions,
-    columnOf,
-    requestMove,
-    onSelectBoard,
-    openDrawer: (uuid, edit) => setDrawer({ uuid, edit }),
-    openCreate: () => setCreateIn(null),
-    openHelp: () => setHelpOpen(true),
-  });
 
   const tzMismatch = useMemo(() => {
     if (!system.data) return false;
@@ -293,6 +283,49 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     null;
 
   const activeCard = dnd.activeUuid ? cardsByUuid.get(dnd.activeUuid) : undefined;
+  const boardProject = projection?.board.project ?? null;
+  const projects = useMemo(() => knownProjects(boardsQuery.data), [boardsQuery.data]);
+
+  const syncNow = useCallback(async () => {
+    if (!online || syncing) return;
+    setSyncing(true);
+    try {
+      const result = await api<{ ok: boolean; detail: string | null; at: string | null }>(
+        "/api/v1/sync",
+        { method: "POST" },
+      );
+      await Promise.all([query.refetch(), boardsQuery.refetch(), system.refetch()]);
+      if (result.ok) {
+        toast({ message: "TaskChampion sync complete", kind: "success" });
+      } else {
+        toast({ message: result.detail || "TaskChampion sync failed", kind: "danger" });
+      }
+    } catch (error) {
+      toast({
+        message: error instanceof Error ? error.message : "TaskChampion sync failed",
+        kind: "danger",
+      });
+    } finally {
+      setSyncing(false);
+    }
+  }, [online, syncing, query, boardsQuery, system, toast]);
+
+  const commands = useBoardCommands({
+    focusedCard,
+    projection,
+    boards: boardsQuery.data,
+    boardId,
+    actions,
+    columnOf,
+    requestMove,
+    onSelectBoard,
+    openDrawer: (uuid, edit) => setDrawer({ uuid, edit }),
+    syncNow: () => void syncNow(),
+    syncing,
+    online: !boardOffline,
+    openCreate: () => setCreateIn(null),
+    openHelp: () => setHelpOpen(true),
+  });
 
   return (
     <div className="shell">
@@ -320,6 +353,8 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
           prefs.selectSort(mode);
           setSortMenuOpen(false);
         }}
+        syncing={syncing}
+        onSync={() => void syncNow()}
         onCreate={() => setCreateIn(null)}
         onHelp={() => setHelpOpen(true)}
       />
@@ -399,6 +434,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
                       key={col.id}
                       column={col}
                       cards={cards}
+                      boardProject={boardProject}
                       dragActive={dnd.activeUuid !== null}
                       activeUuid={dnd.activeUuid}
                       focusUuid={focus.focusUuid}
@@ -418,7 +454,9 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
               <DragOverlay
                 dropAnimation={reducedMotion ? null : { duration: 250, easing: "ease" }}
               >
-                {activeCard ? <TaskCard card={activeCard} overlay /> : null}
+                {activeCard ? (
+                  <TaskCard card={activeCard} boardProject={boardProject} overlay />
+                ) : null}
               </DragOverlay>
             </DndContext>
           </>
@@ -450,6 +488,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         <TaskDrawer
           card={drawerCard}
           actions={actions}
+          projects={projects}
           initialEdit={drawer?.edit}
           onClose={() => setDrawer(null)}
         />
@@ -458,6 +497,8 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         <CreateDialog
           columns={projection.columns}
           initialColumn={createIn}
+          initialProject={boardProject}
+          projects={projects}
           onCreate={async (payload) => (await actions.createTask(payload)) !== null}
           onClose={() => setCreateIn(false)}
         />

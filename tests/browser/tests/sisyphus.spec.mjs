@@ -84,6 +84,35 @@ test("create task via N lands on the board", async ({ page }) => {
   await expect(page.locator(".card-title", { hasText: "e2e created task" })).toBeVisible();
 });
 
+test("project boards are dynamic and tags stay hidden", async ({ page }) => {
+  await gotoBoard(page);
+  // Tags are board-managed: no tag input anywhere in the create dialog.
+  await page.keyboard.press("n");
+  const dialog = page.locator(".create-dialog");
+  await expect(dialog.locator("label", { hasText: "Tags" })).toHaveCount(0);
+  await dialog.locator('input[placeholder="What needs doing?"]').fill("task in a brand new project");
+  await dialog.locator("label", { hasText: "Project" }).locator("input").fill("e2e-fresh");
+  await dialog.locator(".btn-primary").click();
+  await expect(page.locator(".card-title", { hasText: "task in a brand new project" })).toBeVisible();
+
+  // The new project shows up in the switcher under Projects and opens a board.
+  await page.locator(".board-switcher").click();
+  await expect(page.locator(".switcher-section", { hasText: "Projects" })).toBeVisible();
+  await page.locator(".switcher-project", { hasText: "e2e-fresh" }).click();
+  await expect(page.locator(".topbar .board-name")).toHaveText("e2e-fresh");
+  await expect(page.locator(".column")).toHaveCount(5);
+  await expect(page.locator(".card")).toHaveCount(1);
+  // Nested project names remain exact boards; no synthetic parent board is invented.
+  await page.locator(".board-switcher").click();
+  await expect(page.locator(".switcher-project", { hasText: "work.sisyphus" })).toBeVisible();
+  await expect(page.locator('.switcher-project[title="work"]')).toHaveCount(0);
+  await page.locator(".switcher-project", { hasText: "work.sisyphus" }).click();
+  await expect(page.locator(".topbar .board-name")).toHaveText("work.sisyphus");
+  expect(await page.locator(".card").count()).toBeGreaterThan(1);
+  // Cards on a project board never show a tag chip.
+  await expect(page.locator(".card .chip-plain", { hasText: "#" })).toHaveCount(0);
+});
+
 test("daily board overdue column is read-only", async ({ page }) => {
   await gotoBoard(page, "daily");
   await expect(page.locator(".topbar .board-name")).toHaveText("Daily");

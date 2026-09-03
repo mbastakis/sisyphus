@@ -9,7 +9,7 @@ A unit of work identified by its stable Taskwarrior identity and usable from bot
 _Avoid_: Card, issue, work item
 
 **Board**:
-A named, server-configured lens over the Task Universe, defined by a Task scope, columns, ordering, and presentation. Boards may overlap and never own a separate copy of Task state.
+A named lens over the Task Universe, defined by a Task scope, columns, ordering, and presentation. Lifecycle and Daily are server-configured core Boards; exact Taskwarrior project names generate Project Boards automatically. Boards may overlap and never own a separate copy of Task state.
 _Avoid_: Task database, workflow
 
 **System of Record**:

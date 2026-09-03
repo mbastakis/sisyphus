@@ -5,15 +5,25 @@ import { todayInputValue } from "../lib/dates";
 interface Props {
   columns: BoardColumnDto[];
   initialColumn: string | null;
+  /** Project of the current board, prefilled so new tasks land on it. */
+  initialProject: string | null;
+  /** Known project names for autocomplete; a new name creates a new board. */
+  projects: string[];
   onCreate: (payload: Record<string, unknown>) => Promise<boolean>;
   onClose: () => void;
 }
 
-export function CreateDialog({ columns, initialColumn, onCreate, onClose }: Props) {
+export function CreateDialog({
+  columns,
+  initialColumn,
+  initialProject,
+  projects,
+  onCreate,
+  onClose,
+}: Props) {
   const writable = columns.filter((c) => !c.read_only);
   const [description, setDescription] = useState("");
-  const [project, setProject] = useState("");
-  const [tags, setTags] = useState("");
+  const [project, setProject] = useState(initialProject ?? "");
   const [priority, setPriority] = useState("");
   const [due, setDue] = useState("");
   const [columnId, setColumnId] = useState(
@@ -38,10 +48,6 @@ export function CreateDialog({ columns, initialColumn, onCreate, onClose }: Prop
     const ok = await onCreate({
       description: description.trim(),
       project: project.trim() || null,
-      tags: tags
-        .split(",")
-        .map((t) => t.trim())
-        .filter(Boolean),
       priority: priority || null,
       due: due || null,
       column_id: columnId || null,
@@ -104,18 +110,21 @@ export function CreateDialog({ columns, initialColumn, onCreate, onClose }: Prop
             <input
               value={project}
               onChange={(e) => setProject(e.target.value)}
-              placeholder="home.garden"
+              placeholder="e.g. home.garden"
+              list="sisyphus-projects"
+              autoComplete="off"
             />
+            <datalist id="sisyphus-projects">
+              {projects.map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
           </label>
           <label className="field">
             <span>Due</span>
             <input type="date" value={due} onChange={(e) => setDue(e.target.value)} />
           </label>
         </div>
-        <label className="field">
-          <span>Tags (comma separated)</span>
-          <input value={tags} onChange={(e) => setTags(e.target.value)} />
-        </label>
         {needsPrompt && (
           <label className="field">
             <span>

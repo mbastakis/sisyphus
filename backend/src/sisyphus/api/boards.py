@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from ..application.board_service import BoardService, _card
 from .deps import board_service
@@ -12,7 +12,6 @@ router = APIRouter(prefix="/api/v1/boards", tags=["boards"])
 class CreateTaskBody(BaseModel):
     description: str
     project: str | None = None
-    tags: list[str] = Field(default_factory=list)
     priority: str | None = None
     due: str | None = None
     column_id: str | None = None
@@ -46,7 +45,7 @@ def create_task(
     board_id: str, body: CreateTaskBody, svc: BoardService = Depends(board_service)
 ):
     task = svc.create_task(board_id, body.model_dump())
-    board = svc.config.board(board_id)
+    board = svc.board(board_id)
     return {"task": _card(task, board, {task.uuid: task})}
 
 
@@ -62,7 +61,7 @@ def move_task(
         prompt_value=body.prompt_value,
         index=body.index,
     )
-    board = svc.config.board(board_id)
+    board = svc.board(board_id)
     return {"task": _card(task, board, {task.uuid: task})}
 
 
@@ -71,5 +70,5 @@ def reorder_task(
     board_id: str, uuid: str, body: ReorderBody, svc: BoardService = Depends(board_service)
 ):
     task = svc.reorder_task(board_id, uuid, body.index, body.expected_modified)
-    board = svc.config.board(board_id)
+    board = svc.board(board_id)
     return {"task": _card(task, board, {task.uuid: task})}

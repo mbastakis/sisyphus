@@ -7,6 +7,7 @@ import { TaskCard } from "./TaskCard";
 interface ColumnProps {
   column: BoardColumnDto;
   cards: Card[];
+  boardProject: string | null;
   dragActive: boolean;
   activeUuid: string | null;
   focusUuid: string | null;
@@ -21,6 +22,7 @@ interface ColumnProps {
 
 function SortableCard(props: {
   card: Card;
+  boardProject: string | null;
   disabled: boolean;
   ghost: boolean;
   focused: boolean;
@@ -41,6 +43,7 @@ function SortableCard(props: {
     <div ref={setNodeRef} style={style} {...dndProps} tabIndex={-1}>
       <TaskCard
         card={props.card}
+        boardProject={props.boardProject}
         ghost={props.ghost}
         focused={props.focused}
         selected={props.selected}
@@ -54,6 +57,7 @@ function SortableCard(props: {
 export function BoardColumn({
   column,
   cards,
+  boardProject,
   dragActive,
   activeUuid,
   focusUuid,
@@ -147,6 +151,7 @@ export function BoardColumn({
             <SortableCard
               key={card.uuid}
               card={card}
+              boardProject={boardProject}
               disabled={!dndEnabled}
               ghost={card.uuid === activeUuid}
               focused={card.uuid === focusUuid}

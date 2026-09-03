@@ -95,6 +95,11 @@ def test_cli_mode_requires_explicit_auth(monkeypatch):
 def test_config_check_command(capsys):
     assert check_main([str(CONFIG)]) == 0
     out = capsys.readouterr().out
-    assert "3 boards" in out
+    assert "2 boards" in out
     assert "rank_uda=sisyphus_rank_lifecycle" in out
+    assert "rank_uda=sisyphus_rank_project" in out
+    assert check_main(["--taskrc-udas", str(CONFIG)]) == 0
+    udas = capsys.readouterr().out
+    assert "uda.sisyphus_rank_lifecycle.type=string" in udas
+    assert "uda.sisyphus_rank_project.type=string" in udas
     assert check_main(["/nonexistent/boards.yaml"]) == 1

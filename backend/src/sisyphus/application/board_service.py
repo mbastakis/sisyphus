@@ -2,7 +2,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-from ..config.models import AppConfig, BoardConfig, ColumnConfig
+from ..config.models import (
+    PROJECT_BOARD_PREFIX,
+    AppConfig,
+    BoardConfig,
+    ColumnConfig,
+    project_board,
+    project_board_id,
+)
 from ..domain import commands as cmd
 from ..domain.errors import (
     ConflictError,
@@ -15,6 +22,9 @@ from ..domain.task import Task, local_date, local_today, server_timezone
 from ..repositories.port import TaskFilter, TaskRepository
 from . import ranks
 
+# Window during which a finished project keeps its board (recent Done column).
+PROJECT_COMPLETED_DAYS = 14
+
 
 class BoardService:
     def __init__(self, config: AppConfig, repo: TaskRepository):
@@ -24,16 +34,69 @@ class BoardService:
     # -- projection ----------------------------------------------------------
 
     def list_boards(self) -> list[dict]:
-        return [
-            {"id": b.id, "name": b.name, "description": b.description}
+        """Core boards followed by one board per exact project in use.
+
+        A project board exists while that project holds any task in lifecycle
+        scope (pending, waiting, or completed within the window) and
+        disappears on its own once the project is empty.
+        """
+        out = [
+            {
+                "id": b.id,
+                "name": b.name,
+                "description": b.description,
+                "kind": "static",
+                "project": b.scope.project,
+                "open_count": None,
+            }
             for b in self.config.boards
         ]
+        for project, counts in sorted(self._project_index().items()):
+            open_count = counts["open"]
+            out.append(
+                {
+                    "id": project_board_id(project),
+                    "name": project,
+                    "description": f"{open_count} open" if open_count else "nothing open",
+                    "kind": "project",
+                    "project": project,
+                    "open_count": open_count,
+                }
+            )
+        return out
+
+    def _project_index(self) -> dict[str, dict[str, int]]:
+        """Exact projects that currently deserve a board, with task counts."""
+        tasks = self.repo.query(
+            TaskFilter(
+                statuses=["pending", "waiting", "completed"],
+                completed_after=datetime.now(UTC) - timedelta(days=PROJECT_COMPLETED_DAYS),
+            )
+        )
+        index: dict[str, dict[str, int]] = {}
+        for task in tasks:
+            project = (task.project or "").strip()
+            if not project:
+                continue
+            entry = index.setdefault(project, {"open": 0, "total": 0})
+            entry["total"] += 1
+            if task.status in ("pending", "waiting"):
+                entry["open"] += 1
+        return index
+
+    def board(self, board_id: str) -> BoardConfig:
+        """Resolve a static or dynamic board id, or raise NotFoundError."""
+        return self._board(board_id)
 
     def _board(self, board_id: str) -> BoardConfig:
         board = self.config.board(board_id)
-        if board is None:
-            raise NotFoundError(f"board {board_id!r} not found")
-        return board
+        if board is not None:
+            return board
+        if board_id.startswith(PROJECT_BOARD_PREFIX):
+            project = board_id[len(PROJECT_BOARD_PREFIX):].strip()
+            if project and project in self._project_index():
+                return project_board(project, self.config.ready_tag, PROJECT_COMPLETED_DAYS)
+        raise NotFoundError(f"board {board_id!r} not found")
 
     def _scope_filter(self, board: BoardConfig) -> TaskFilter:
         statuses = ["pending", "waiting"]
@@ -163,6 +226,8 @@ class BoardService:
                 "ordering_mode": board.ordering.mode,
                 "mobile_default_column": board.mobile.default_column,
                 "ready_tag": board.ready_tag,
+                "kind": "project" if board.is_project_board else "static",
+                "project": board.scope.project,
             },
             "generation": self.repo.generation,
             "generated_at": datetime.now(UTC).isoformat(),
@@ -187,11 +252,13 @@ class BoardService:
         if board.scope.project and not project:
             project = board.scope.project
         due = _parse_date(payload.get("due"))
+        # Tags are board-managed lifecycle markers, never user input: a new
+        # task starts untagged and the target column's write rule sets state.
         task = self.repo.create(
             cmd.CreateTask(
                 description=description,
                 project=project,
-                tags=payload.get("tags") or [],
+                tags=[],
                 priority=payload.get("priority") or None,
                 due=due,
             )

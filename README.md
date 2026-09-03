@@ -17,6 +17,28 @@ tests/      browser/ — Playwright e2e (runs against fake data)
 docs/       architecture plan, deployment reference
 ```
 
+## Projects and tags
+
+Projects are the first-class way to organise work. Every exact project name
+that has tasks in scope (pending, waiting, or completed in the last 14 days)
+gets its own lifecycle board automatically under **Projects** in the board
+switcher. Creating a task with a new project name makes a new board appear;
+when the last task leaves scope the board disappears. Dotted Taskwarrior
+projects remain exact: `work.sisyphus` does not invent a separate `work`
+board or include sibling projects. `config/boards.yaml` is restricted to the
+two core boards, Lifecycle and Daily.
+
+Tags are never shown or edited in the UI. The only tag Sisyphus touches is
+the board-managed Ready marker (`ready_tag`, default `next`, matching the
+CLI convention `+next`): dragging a card between Backlog and Ready adds or
+removes it. Tags set from the CLI still work and are visible under *Raw
+details* in the task drawer.
+
+All project boards share one rank UDA, `sisyphus_rank_project`; because each
+task has one exact project, this is enough to preserve its manual position.
+The container entrypoint declares it in the generated taskrc alongside the
+core boards' rank UDAs.
+
 ## Development (safe by default)
 
 Development runs against an in-memory **fake** repository seeded with sample

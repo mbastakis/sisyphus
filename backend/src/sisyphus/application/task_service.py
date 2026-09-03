@@ -38,9 +38,9 @@ class TaskService:
                 case "due" | "wait" | "scheduled":
                     muts.append(cmd.SetField(field, _parse_date(value)))
                 case "tags":
-                    if not isinstance(value, list):
-                        raise ValidationError("tags must be a list")
-                    muts.append(cmd.SetTags([str(t).strip() for t in value if str(t).strip()]))
+                    raise ValidationError(
+                        "tags are managed by boards; move the task between columns instead"
+                    )
                 case "depends":
                     if not isinstance(value, list):
                         raise ValidationError("depends must be a list")

@@ -1,5 +1,14 @@
 version: 1
 
+# Core boards only. This file must contain exactly Lifecycle and Daily.
+# One lifecycle board per exact project is generated at runtime (id
+# `project:<name>`) for every project that has tasks in scope, so project
+# boards are never configured here. All project boards share the reserved
+# rank UDA `sisyphus_rank_project`.
+#
+# `ready_tag` (default: next) is the board-managed marker for the Ready
+# column. Sisyphus never exposes tags to the user; it only toggles this one.
+
 boards:
   - id: lifecycle
     name: Lifecycle
@@ -38,18 +47,6 @@ boards:
         name: Done
         match: { preset: done }
         write: { preset: done }
-
-  - id: project-home
-    name: Home
-    description: Lifecycle board scoped to the home project subtree
-    template: project-lifecycle
-    scope:
-      project: home
-      include_descendants: true
-      completed_days: 14
-    ordering:
-      mode: manual
-      rank_uda: sisyphus_rank_project_home
 
   - id: daily
     name: Daily

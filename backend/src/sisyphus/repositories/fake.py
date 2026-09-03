@@ -181,7 +181,7 @@ class FakeTaskRepository:
         def day(offset: int) -> datetime:
             return (today + timedelta(days=offset)).astimezone(UTC)
 
-        rank_counter = {"lifecycle": 0, "home": 0}
+        rank_counter = {"lifecycle": 0, "project": 0}
 
         def add(
             desc: str,
@@ -221,16 +221,16 @@ class FakeTaskRepository:
                 )
             rank_counter["lifecycle"] += 1
             t.udas["sisyphus_rank_lifecycle"] = f"{rank_counter['lifecycle'] * 1024:012d}"
-            if project and (project == "home" or project.startswith("home.")):
-                rank_counter["home"] += 1
-                t.udas["sisyphus_rank_project_home"] = f"{rank_counter['home'] * 1024:012d}"
+            if project:
+                rank_counter["project"] += 1
+                t.udas["sisyphus_rank_project"] = f"{rank_counter['project'] * 1024:012d}"
             t.urgency = _urgency(t)
             self._tasks[t.uuid] = t
             return t
 
         # Doing
         add("Wire the taskwarrior CLI adapter behind the repository port",
-            project="work.sisyphus", tags=["ready", "deep"], priority="H", due=1,
+            project="work.sisyphus", tags=["next", "deep"], priority="H", due=1,
             started=True, age_days=6,
             annotations=["Blocked on deciding subprocess timeout policy — resolved: 10s."])
         add("Prune the tomato plants before the heat wave",
@@ -238,12 +238,12 @@ class FakeTaskRepository:
 
         # Ready
         add("Write contract tests for the board projection DTO",
-            project="work.sisyphus", tags=["ready", "tests"], priority="M", due=2, age_days=4)
-        add("Replace the kitchen tap washer", project="home", tags=["ready", "diy"],
+            project="work.sisyphus", tags=["next", "tests"], priority="M", due=2, age_days=4)
+        add("Replace the kitchen tap washer", project="home", tags=["next", "diy"],
             priority="L", age_days=21)
         add("Renew the domain registration", project="personal.admin",
-            tags=["ready"], priority="H", due=3, age_days=30)
-        add("Sharpen the chef's knife", project="home.kitchen", tags=["ready"], age_days=8)
+            tags=["next"], priority="H", due=3, age_days=30)
+        add("Sharpen the chef's knife", project="home.kitchen", tags=["next"], age_days=8)
 
         # Backlog
         blocked_parent = add("Order raised-bed soil and compost",

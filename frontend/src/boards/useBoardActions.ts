@@ -85,6 +85,8 @@ export function useBoardActions(boardId: string) {
 
   const refresh = useCallback(() => {
     qc.invalidateQueries({ queryKey: key });
+    // Project boards come and go with the tasks in them.
+    qc.invalidateQueries({ queryKey: ["boards"] });
   }, [qc, boardId]);
 
   const conflictToast = useCallback(

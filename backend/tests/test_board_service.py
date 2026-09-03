@@ -4,12 +4,15 @@ from pathlib import Path
 import pytest
 
 from sisyphus.application.board_service import BoardService
+from sisyphus.application.task_service import TaskService
 from sisyphus.config.loader import load_config
 from sisyphus.domain import commands as cmd
 from sisyphus.domain.errors import (
     ConflictError,
+    NotFoundError,
     PromptRequiredError,
     ReadOnlyColumnError,
+    ValidationError,
 )
 from sisyphus.repositories.fake import FakeTaskRepository
 
@@ -21,14 +24,17 @@ def svc() -> BoardService:
     return BoardService(load_config(CONFIG), FakeTaskRepository(seed=False))
 
 
+READY = "next"
+
+
 def make(svc: BoardService, description: str, **kwargs):
-    task = svc.repo.create(cmd.CreateTask(description=description))
+    task = svc.repo.create(cmd.CreateTask(description=description, project=kwargs.get("project")))
     muts = []
     for field in ("due", "wait"):
         if field in kwargs:
             muts.append(cmd.SetField(field, kwargs[field]))
     if kwargs.get("ready"):
-        muts.append(cmd.AddTag("ready"))
+        muts.append(cmd.AddTag(READY))
     if kwargs.get("started"):
         muts.append(cmd.Start())
     if kwargs.get("completed"):
@@ -66,7 +72,7 @@ def test_move_out_of_doing_stops_first(svc: BoardService):
         "lifecycle", task.uuid, "ready", task.modified.isoformat()
     )
     assert moved.start is None
-    assert "ready" in moved.tags
+    assert READY in moved.tags
 
 
 def test_move_out_of_done_reopens(svc: BoardService):
@@ -126,3 +132,77 @@ def test_manual_reorder_persists_rank(svc: BoardService):
     p = svc.projection("lifecycle")
     order = [card["uuid"] for card in p["columns"][0]["cards"]]
     assert order == [c.uuid, a.uuid, b.uuid]
+
+
+def test_ready_tag_matches_cli_convention(svc: BoardService):
+    assert svc.config.board("lifecycle").ready_tag == "next"
+    task = make(svc, "prioritised on the CLI")
+    svc.repo.apply(task.uuid, [cmd.AddTag("next")])
+    assert column_of(svc.projection("lifecycle"), task.uuid) == "ready"
+
+
+def test_create_ignores_tags_and_column_sets_marker(svc: BoardService):
+    task = svc.create_task(
+        "lifecycle", {"description": "new", "tags": ["rogue"], "column_id": "ready"}
+    )
+    assert task.tags == [READY]
+    back = svc.move_task("lifecycle", task.uuid, "backlog", task.modified.isoformat())
+    assert back.tags == []
+
+
+def test_tags_are_not_patchable(svc: BoardService):
+    task = make(svc, "plain")
+    with pytest.raises(ValidationError):
+        TaskService(svc.repo).patch(task.uuid, task.modified.isoformat(), {"tags": ["x"]})
+
+
+def test_project_boards_appear_and_disappear(svc: BoardService):
+    assert [b["id"] for b in svc.list_boards()] == ["lifecycle", "daily"]
+    task = make(svc, "child", project="work.sisyphus")
+    boards = {b["id"]: b for b in svc.list_boards()}
+    assert "project:work" not in boards
+    assert boards["project:work.sisyphus"]["kind"] == "project"
+    assert boards["project:work.sisyphus"]["open_count"] == 1
+    p = svc.projection("project:work.sisyphus")
+    assert p["board"]["project"] == "work.sisyphus"
+    assert p["board"]["kind"] == "project"
+    assert column_of(p, task.uuid) == "backlog"
+    with pytest.raises(NotFoundError):
+        svc.projection("project:work")
+    # Completing keeps the exact project board (recent Done) but drops its open count.
+    svc.repo.apply(task.uuid, [cmd.Complete()])
+    boards = {b["id"]: b for b in svc.list_boards()}
+    assert boards["project:work.sisyphus"]["open_count"] == 0
+    svc.repo.delete(task.uuid)
+    assert "project:work.sisyphus" not in {b["id"] for b in svc.list_boards()}
+    with pytest.raises(NotFoundError):
+        svc.projection("project:work.sisyphus")
+
+
+def test_project_board_does_not_include_descendant_projects(svc: BoardService):
+    parent = make(svc, "parent", project="work")
+    child = make(svc, "child", project="work.sisyphus")
+    projection = svc.projection("project:work")
+    assert column_of(projection, parent.uuid) == "backlog"
+    assert all(
+        card["uuid"] != child.uuid
+        for column in projection["columns"]
+        for card in column["cards"]
+    )
+
+
+def test_project_board_create_defaults_project_and_moves(svc: BoardService):
+    make(svc, "seed", project="home")
+    task = svc.create_task("project:home", {"description": "new on project board"})
+    assert task.project == "home"
+    moved = svc.move_task("project:home", task.uuid, "ready", task.modified.isoformat())
+    assert READY in moved.tags
+    svc.reorder_task("project:home", moved.uuid, 0, moved.modified.isoformat())
+    assert svc.repo.get(task.uuid).udas.get("sisyphus_rank_project") is not None
+
+
+def test_config_rejects_additional_static_boards(tmp_path):
+    bad = tmp_path / "boards.yaml"
+    bad.write_text(CONFIG.read_text() + "\n  - id: home\n    name: Home\n    template: lifecycle\n")
+    with pytest.raises(ValueError, match="exactly"):
+        load_config(bad)

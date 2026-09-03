@@ -1,5 +1,4 @@
 import type { SyncState } from "../api/types";
-import { timeOnly } from "../lib/dates";
 
 interface Props {
   sync: SyncState | undefined;
@@ -33,12 +32,5 @@ export function SyncIndicator({ sync, fetching, online, degraded }: Props) {
       </span>
     );
   }
-  return (
-    <span
-      className="sync sync-ok"
-      title={sync?.last_success ? `Synced ${timeOnly(sync.last_success)}` : "Synced"}
-    >
-      ✓
-    </span>
-  );
+  return null;
 }

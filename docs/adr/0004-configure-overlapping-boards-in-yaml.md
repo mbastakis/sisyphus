@@ -1,3 +1,10 @@
-# Configure overlapping Boards in server-side YAML
+# Configure core Boards in server-side YAML
 
-Sisyphus will define multiple overlapping Boards in a versioned server-side YAML file, with each Board declaring a scope, column mappings, write rules, card presentation, and ordering. Taskwarrior still owns the Task Universe; Board configuration is shared presentation and behavior metadata, while manual ordering is stored per Board on Tasks through documented UDAs.
+Sisyphus defines the Lifecycle and Daily core Boards in versioned server-side
+YAML. The configuration accepts exactly those two stable Board IDs, including
+their scopes, column mappings, write rules, presentation, and ordering.
+
+Project Boards are not configured. They are generated automatically for each
+exact Taskwarrior project name that has tasks in lifecycle scope. Taskwarrior
+still owns the Task Universe; manual ordering is stored on Tasks through the
+documented lifecycle and shared project rank UDAs.

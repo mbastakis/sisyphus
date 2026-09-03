@@ -17,6 +17,7 @@ import sys
 from pathlib import Path
 
 from .loader import find_config_path, load_config
+from .models import PROJECT_RANK_UDA
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -35,6 +36,8 @@ def main(argv: list[str] | None = None) -> int:
             if board.ordering.rank_uda:
                 print(f"uda.{board.ordering.rank_uda}.type=string")
                 print(f"uda.{board.ordering.rank_uda}.label=Sisyphus rank ({board.id})")
+        print(f"uda.{PROJECT_RANK_UDA}.type=string")
+        print(f"uda.{PROJECT_RANK_UDA}.label=Sisyphus rank (project boards)")
         return 0
 
     print(f"OK: {path} (version {config.version}, {len(config.boards)} boards)")
@@ -47,6 +50,11 @@ def main(argv: list[str] | None = None) -> int:
                 f"    taskrc needs: uda.{board.ordering.rank_uda}.type=string "
                 f"uda.{board.ordering.rank_uda}.label='Sisyphus rank ({board.id})'"
             )
+    print(
+        f"  - project:<name>: dynamic lifecycle board per project, "
+        f"ordering=manual rank_uda={PROJECT_RANK_UDA}"
+    )
+    print(f"    taskrc needs: uda.{PROJECT_RANK_UDA}.type=string")
     print("  (* = read-only column)")
     return 0
 
