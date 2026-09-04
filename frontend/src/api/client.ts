@@ -1,3 +1,4 @@
+import { runWhenIdle } from "../lib/idle";
 import type { Card } from "./types";
 
 export class ApiError extends Error {
@@ -15,7 +16,16 @@ export class ApiError extends Error {
   }
 }
 
-let reauthStarted = false;
+let reauthNavigated = false;
+let reauthQueued = false;
+
+function reauth(): void {
+  if (reauthNavigated) return;
+  reauthNavigated = true;
+  window.location.assign(
+    "/outpost.goauthentik.io/start?rd=" + encodeURIComponent(window.location.href),
+  );
+}
 
 export async function api<T>(
   path: string,
@@ -32,11 +42,16 @@ export async function api<T>(
     redirect: "manual",
   });
   if (res.type === "opaqueredirect") {
-    if (!reauthStarted && navigator.onLine) {
-      reauthStarted = true;
-      window.location.assign(
-        "/outpost.goauthentik.io/start?rd=" + encodeURIComponent(window.location.href),
-      );
+    if (navigator.onLine) {
+      // A background refetch must not yank the page away mid-typing: wait
+      // until no dialog is open. A user-initiated mutation navigates at once —
+      // its draft is persisted, so it survives the login round trip.
+      if (options.method && options.method !== "GET") {
+        reauth();
+      } else if (!reauthQueued) {
+        reauthQueued = true;
+        runWhenIdle(reauth);
+      }
     }
     throw new ApiError(401, { code: "unauthorized", message: "Signing in again…" });
   }

@@ -141,6 +141,46 @@ test("collapse and sort persist across reload", async ({ page }) => {
   await page.locator(".collapsed-strip").click();
 });
 
+test("create dialog draft survives a page reload", async ({ page }) => {
+  await gotoBoard(page);
+  await page.keyboard.press("n");
+  const dialog = page.locator(".create-dialog");
+  await dialog.locator('input[placeholder="What needs doing?"]').fill("half-typed task");
+  await page.reload();
+  await expect(page.locator(".column").first()).toBeVisible();
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('input[placeholder="What needs doing?"]')).toHaveValue(
+    "half-typed task",
+  );
+  // Explicit cancel discards the draft; a fresh dialog starts empty.
+  await dialog.locator(".btn-secondary", { hasText: "Cancel" }).click();
+  await page.keyboard.press("n");
+  await expect(dialog.locator('input[placeholder="What needs doing?"]')).toHaveValue("");
+  await page.keyboard.press("Escape");
+});
+
+test("drawer edit survives a background refetch and a reload", async ({ page, request }) => {
+  await gotoBoard(page);
+  await page.locator(".card").first().click();
+  const drawer = page.locator(".drawer");
+  await drawer.locator("button", { hasText: "Edit" }).click();
+  const description = drawer.locator("textarea");
+  await description.fill("edited but not saved");
+  // Another client changes the board: the SSE push refetches the projection.
+  const created = await request.post("/api/v1/boards/lifecycle/tasks", {
+    data: { description: "background change" },
+  });
+  expect(created.ok()).toBeTruthy();
+  await expect(page.locator(".card-title", { hasText: "background change" })).toBeVisible();
+  await expect(description).toHaveValue("edited but not saved");
+  await page.reload();
+  await expect(page.locator(".column").first()).toBeVisible();
+  await expect(drawer.locator("textarea")).toHaveValue("edited but not saved");
+  await drawer.locator("button", { hasText: "Cancel" }).click();
+  await page.keyboard.press("Escape");
+  await expect(drawer).toHaveCount(0);
+});
+
 test("offline shows banner and disables mutations", async ({ page, context }) => {
   await gotoBoard(page);
   await context.setOffline(true);

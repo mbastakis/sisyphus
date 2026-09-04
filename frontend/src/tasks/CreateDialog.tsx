@@ -1,6 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import type { BoardColumnDto } from "../api/types";
 import { todayInputValue } from "../lib/dates";
+import { clearDraft, loadDraft, saveDraft } from "../lib/drafts";
+
+export interface CreateDraft {
+  description: string;
+  project: string;
+  priority: string;
+  due: string;
+  columnId: string;
+  promptValue: string;
+}
 
 interface Props {
   columns: BoardColumnDto[];
@@ -9,6 +19,9 @@ interface Props {
   initialProject: string | null;
   /** Known project names for autocomplete; a new name creates a new board. */
   projects: string[];
+  /** sessionStorage key under which the in-progress form is persisted so a
+   * page reload (SW update, re-login, refresh) restores it. */
+  draftKey: string;
   onCreate: (payload: Record<string, unknown>) => Promise<boolean>;
   onClose: () => void;
 }
@@ -18,26 +31,48 @@ export function CreateDialog({
   initialColumn,
   initialProject,
   projects,
+  draftKey,
   onCreate,
   onClose,
 }: Props) {
   const writable = columns.filter((c) => !c.read_only);
-  const [description, setDescription] = useState("");
-  const [project, setProject] = useState(initialProject ?? "");
-  const [priority, setPriority] = useState("");
-  const [due, setDue] = useState("");
-  const [columnId, setColumnId] = useState(
-    initialColumn && writable.some((c) => c.id === initialColumn)
-      ? initialColumn
-      : (writable[0]?.id ?? ""),
-  );
-  const [promptValue, setPromptValue] = useState(todayInputValue(1));
+  const [restored] = useState(() => loadDraft<CreateDraft>(draftKey));
+  const [description, setDescription] = useState(restored?.description ?? "");
+  const [project, setProject] = useState(restored?.project ?? initialProject ?? "");
+  const [priority, setPriority] = useState(restored?.priority ?? "");
+  const [due, setDue] = useState(restored?.due ?? "");
+  const [columnId, setColumnId] = useState(() => {
+    const wanted = restored?.columnId || initialColumn;
+    return wanted && writable.some((c) => c.id === wanted) ? wanted : (writable[0]?.id ?? "");
+  });
+  const [promptValue, setPromptValue] = useState(restored?.promptValue ?? todayInputValue(1));
   const [busy, setBusy] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    const typed = description || priority || due || project !== (initialProject ?? "");
+    if (!typed) {
+      clearDraft(draftKey);
+      return;
+    }
+    saveDraft(draftKey, {
+      description,
+      project,
+      priority,
+      due,
+      columnId,
+      promptValue,
+    } satisfies CreateDraft);
+  }, [draftKey, initialProject, description, project, priority, due, columnId, promptValue]);
+
+  const cancel = () => {
+    clearDraft(draftKey);
+    onClose();
+  };
 
   const selected = writable.find((c) => c.id === columnId);
   const needsPrompt = selected?.prompt != null;
@@ -54,18 +89,21 @@ export function CreateDialog({
       prompt_value: needsPrompt ? promptValue : null,
     });
     setBusy(false);
-    if (ok) onClose();
+    if (ok) {
+      clearDraft(draftKey);
+      onClose();
+    }
   };
 
   return (
-    <div className="scrim" onClick={onClose}>
+    <div className="scrim" onClick={cancel}>
       <div
         className="dialog create-dialog"
         role="dialog"
         aria-label="Create task"
         onClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
+          if (e.key === "Escape") cancel();
           if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) void submit();
           e.stopPropagation();
         }}
@@ -138,7 +176,7 @@ export function CreateDialog({
           </label>
         )}
         <div className="dialog-actions">
-          <button className="btn-secondary" onClick={onClose}>
+          <button className="btn-secondary" onClick={cancel}>
             Cancel
           </button>
           <button className="btn-primary" disabled={!description.trim() || busy} onClick={submit}>

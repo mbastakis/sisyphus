@@ -31,7 +31,11 @@ function BoardChooser() {
     localStorage.setItem("sisyphus.lastBoard", id);
   };
 
-  if (boards.isError) {
+  // Only take the board down when there is nothing to show. A failed
+  // background refetch (backend restart, expired session, blip) keeps the
+  // mounted board — and any open dialog — intact; BoardPage shows its
+  // offline banner instead.
+  if (boards.isError && !boards.data) {
     return (
       <div className="board-message board-message-page">
         <p>Cannot reach the Sisyphus backend.</p>

@@ -15,9 +15,11 @@ import { KeyboardHelp } from "../components/KeyboardHelp";
 import { useToast } from "../components/Toasts";
 import { MoveMenu } from "../components/MoveMenu";
 import { PromptDialog } from "../components/PromptDialog";
-import { CreateDialog } from "../tasks/CreateDialog";
+import { CreateDialog, type CreateDraft } from "../tasks/CreateDialog";
 import { TaskDrawer } from "../tasks/TaskDrawer";
 import { timeOnly, toDateInputValue } from "../lib/dates";
+import { createDraftKey, editDraftUuids, loadDraft } from "../lib/drafts";
+import { setInteractionBusy } from "../lib/idle";
 import { useMedia } from "../lib/useMedia";
 import { BoardColumn } from "./BoardColumn";
 import { SORT_FNS } from "./sort";
@@ -85,6 +87,9 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     setSearch("");
     setDrawer(null);
     setSortMenuOpen(false);
+    // Reopen a create dialog whose draft survived a page reload.
+    const draft = loadDraft<CreateDraft>(createDraftKey(boardId));
+    setCreateIn(draft ? draft.columnId || null : false);
   }, [boardId]);
 
   const cardsByUuid = useMemo(() => {
@@ -92,6 +97,16 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     projection?.columns.forEach((c) => c.cards.forEach((card) => m.set(card.uuid, card)));
     return m;
   }, [projection]);
+
+  // Reopen the drawer for a task whose edit draft survived a page reload,
+  // once per board load, as soon as the projection can resolve the card.
+  const restoredEditFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (!projection || restoredEditFor.current === boardId) return;
+    restoredEditFor.current = boardId;
+    const uuid = editDraftUuids().find((u) => cardsByUuid.has(u));
+    if (uuid) setDrawer({ uuid, edit: true });
+  }, [boardId, projection, cardsByUuid]);
 
   const filterCards = useCallback(
     (cards: Card[]) => {
@@ -228,6 +243,14 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     pendingPrompt !== null ||
     createIn !== false ||
     drawer !== null;
+
+  // While a dialog is open, whole-page actions (service-worker reload,
+  // re-login navigation) are held back so typing is never interrupted.
+  const inputBusy = createIn !== false || drawer !== null;
+  useEffect(() => {
+    setInteractionBusy(inputBusy);
+    return () => setInteractionBusy(false);
+  }, [inputBusy]);
 
   useBoardKeyboard(
     {
@@ -499,6 +522,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
           initialColumn={createIn}
           initialProject={boardProject}
           projects={projects}
+          draftKey={createDraftKey(boardId)}
           onCreate={async (payload) => (await actions.createTask(payload)) !== null}
           onClose={() => setCreateIn(false)}
         />

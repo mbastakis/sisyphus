@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { Card } from "../api/types";
 import type { BoardActions } from "../boards/useBoardActions";
 import { shortDateTime, toDateInputValue } from "../lib/dates";
+import { clearDraft, editDraftKey, loadDraft, saveDraft } from "../lib/drafts";
 
 interface Props {
   card: Card;
@@ -32,15 +33,31 @@ function toDraft(card: Card): Draft {
   };
 }
 
+interface StoredEdit {
+  draft: Draft;
+  annotation: string;
+}
+
 export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Props) {
-  const [editing, setEditing] = useState(initialEdit ?? false);
-  const [draft, setDraft] = useState<Draft>(() => toDraft(card));
-  const [annotation, setAnnotation] = useState("");
+  const draftKey = editDraftKey(card.uuid);
+  // A pending edit persisted before a page reload reopens straight into
+  // edit mode with the typed values intact.
+  const [restored] = useState(() => loadDraft<StoredEdit>(draftKey));
+  const [editing, setEditing] = useState((initialEdit ?? false) || restored !== undefined);
+  const [draft, setDraft] = useState<Draft>(() => restored?.draft ?? toDraft(card));
+  const [annotation, setAnnotation] = useState(restored?.annotation ?? "");
   const [saving, setSaving] = useState(false);
 
+  // A background refetch replaces `card`; only follow it while not editing so
+  // in-progress edits are never overwritten by the server copy.
   useEffect(() => {
     if (!editing) setDraft(toDraft(card));
   }, [card, editing]);
+
+  useEffect(() => {
+    if (editing || annotation) saveDraft(draftKey, { draft, annotation } satisfies StoredEdit);
+    else clearDraft(draftKey);
+  }, [draftKey, editing, draft, annotation]);
 
   const dirty = useMemo(() => {
     const clean = toDraft(card);
@@ -49,6 +66,7 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
 
   const close = () => {
     if (editing && dirty && !window.confirm("Discard unsaved changes?")) return;
+    clearDraft(draftKey);
     onClose();
   };
 
@@ -75,13 +93,17 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
       }
     }
     if (Object.keys(changes).length === 0) {
+      clearDraft(draftKey);
       setEditing(false);
       return;
     }
     setSaving(true);
     const result = await actions.patchTask(card, changes, prev);
     setSaving(false);
-    if (result) setEditing(false);
+    if (result) {
+      clearDraft(draftKey);
+      setEditing(false);
+    }
   };
 
   const addAnnotation = async () => {
@@ -93,7 +115,10 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
 
   const remove = async () => {
     if (!window.confirm(`Delete "${card.description}"? This cannot be undone.`)) return;
-    if (await actions.deleteTask(card)) onClose();
+    if (await actions.deleteTask(card)) {
+      clearDraft(draftKey);
+      onClose();
+    }
   };
 
   return (
@@ -190,6 +215,7 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
               <button
                 className="btn-secondary"
                 onClick={() => {
+                  clearDraft(draftKey);
                   setDraft(toDraft(card));
                   setEditing(false);
                 }}
