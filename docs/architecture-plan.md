@@ -115,7 +115,7 @@ The PWA caches the application shell and the last successfully loaded Board for 
 
 ### Theme
 
-Sisyphus vendors a generated semantic package from the canonical `mbastakis/nocturne-rose` palette repository. The committed snapshot keeps builds independent of sibling repositories and is refreshed explicitly with `task theme:sync`.
+Sisyphus consumes the committed native package in `frontend/vendor/nocturne-rose`. To update it, manually copy the premade files from `dist/sisyphus/` in the canonical `mbastakis/nocturne-rose` repository, then generate app icons and build normally. See the [theme update steps](../README.md#theme-updates).
 
 The initial source palette is:
 

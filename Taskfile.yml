@@ -33,16 +33,14 @@ tasks:
     cmds:
       - npm --prefix frontend run build
 
-  theme:sync:
-    desc: Refresh the generated Nocturne Rose package and icons from the sibling repository
+  icons:generate:
+    desc: Generate app icons from the committed theme package
     cmds:
-      - scripts/sync-nocturne-rose.sh
       - npm --prefix frontend run icons:generate
 
-  theme:check:
-    desc: Verify the generated Nocturne Rose package and icons are current
+  icons:check:
+    desc: Verify app icons match the committed theme package
     cmds:
-      - scripts/sync-nocturne-rose.sh --check
       - npm --prefix frontend run icons:check
 
   config:validate:
@@ -83,7 +81,7 @@ tasks:
   validate:
     desc: Lint, typecheck, validate config, and run all tests
     cmds:
-      - task: theme:check
+      - task: icons:check
       - task: lint
       - task: typecheck
       - task: config:validate

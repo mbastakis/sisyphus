@@ -65,6 +65,26 @@ task config:validate  # validate config/boards.yaml only
 
 First e2e run: `task e2e:sync` installs Playwright and Chromium.
 
+## Theme updates
+
+The frontend consumes the committed native package in
+`frontend/vendor/nocturne-rose`. Manually copy the premade contents of the theme
+repository's `dist/sisyphus/` into that directory, removing obsolete package files
+when the distribution changes. From this repository root, run:
+
+```bash
+mise exec task -- task icons:generate icons:check build:frontend
+```
+
+If the package metadata changes, refresh the frontend lockfile and install
+dependencies using the normal npm workflow. Color-only updates need no dependency
+changes.
+
+Review and commit the package and regenerated
+`frontend/public/icons/` assets together. Icon generation and verification are
+app-owned commands using the local package. Build and deploy the production image
+through the normal application workflow.
+
 ## Production
 
 `task build:image` builds a multi-stage container: Node builds the frontend,
