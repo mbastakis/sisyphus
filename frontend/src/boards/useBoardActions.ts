@@ -2,7 +2,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useCallback } from "react";
 import { api, ApiError } from "../api/client";
 import type { Card, Projection } from "../api/types";
-import { toDateInputValue } from "../lib/dates";
 import { popUndo, pushUndo } from "../lib/undo";
 import { useToast } from "../components/Toasts";
 
@@ -84,7 +83,8 @@ export function useBoardActions(boardId: string) {
   );
 
   const refresh = useCallback(() => {
-    qc.invalidateQueries({ queryKey: key });
+    qc.invalidateQueries({ queryKey: ["board"] });
+    qc.invalidateQueries({ queryKey: ["task"] });
     // Project boards come and go with the tasks in them.
     qc.invalidateQueries({ queryKey: ["boards"] });
   }, [qc, boardId]);
@@ -119,12 +119,26 @@ export function useBoardActions(boardId: string) {
     [toast],
   );
 
+  const semantic = useCallback(async (card: Card, action: string, fields: { date?: string; blocker?: string } = {}) => {
+    if (offlineGuard()) return false;
+    try {
+      const result = await api<{ task: Card }>(`/api/v1/tasks/${card.uuid}/action`, {
+        method: "POST", body: { action, expected_modified: card.modified ?? "", ...fields },
+      });
+      qc.setQueryData(["task", card.uuid], result.task);
+      return true;
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409) {
+        toast({ message: "This task changed elsewhere. Review the latest task before trying again.", kind: "danger", actionLabel: "Reload", onAction: refresh });
+      } else failToast(err);
+      return false;
+    } finally { refresh(); }
+  }, [offlineGuard, qc, toast, refresh, failToast]);
+
   const moveCard = useCallback(
     async (req: MoveRequest): Promise<boolean> => {
       if (offlineGuard()) return false;
       const before = getProjection();
-      const origin = locateCard(before, req.card.uuid);
-      const originCard = findCard(before, req.card.uuid) ?? req.card;
       if (before) {
         qc.setQueryData(
           key,
@@ -148,47 +162,17 @@ export function useBoardActions(boardId: string) {
       };
       try {
         await attempt(req.card.modified ?? "");
-        if (req.recordUndo !== false && origin && origin.columnId !== req.toColumn) {
-          const prevDue = originCard.due;
-          const prevWait = originCard.wait;
-          pushUndo({
-            label: `Move back to ${origin.columnId}`,
-            run: async () => {
-              const current = findCard(getProjection(), req.card.uuid);
-              if (!current) throw new Error("task no longer visible");
-              const sourcePrompt = getProjection()?.columns.find(
-                (c) => c.id === origin.columnId,
-              )?.prompt;
-              let promptValue: string | undefined;
-              if (sourcePrompt?.field === "due" && prevDue)
-                promptValue = toDateInputValue(prevDue);
-              if (sourcePrompt?.field === "wait" && prevWait)
-                promptValue = toDateInputValue(prevWait);
-              await moveCard({
-                card: current,
-                toColumn: origin.columnId,
-                index: origin.index,
-                promptValue,
-                recordUndo: false,
-              });
-            },
-          });
           const colName =
             before?.columns.find((c) => c.id === req.toColumn)?.name ?? req.toColumn;
           toast({
             message: `Moved to ${colName}`,
             kind: "success",
-            actionLabel: "Undo",
-            onAction: () => runUndo(),
           });
-        }
         return true;
       } catch (err) {
         qc.setQueryData(key, before);
         if (err instanceof ApiError && err.status === 409) {
-          conflictToast(err, (fresh) => {
-            void moveCard({ ...req, card: { ...req.card, modified: fresh } });
-          });
+          toast({ message: "This task changed elsewhere. Review the latest task before trying again.", kind: "danger", actionLabel: "Reload", onAction: refresh });
         } else {
           failToast(err, () => void moveCard(req));
         }
@@ -217,8 +201,9 @@ export function useBoardActions(boardId: string) {
           label: "Restore order",
           run: async () => {
             const current = findCard(getProjection(), card.uuid);
-            if (!current) throw new Error("task no longer visible");
-            await reorderCard(current, fromIndex, index);
+             if (!current?.modified || !navigator.onLine) throw new Error("Cannot restore order without a current task and connection");
+             await api(`/api/v1/boards/${boardId}/tasks/${card.uuid}/reorder`, { method: "POST", body: { index: fromIndex, expected_modified: current.modified } });
+             refresh();
           },
         });
       } catch (err) {
@@ -241,7 +226,6 @@ export function useBoardActions(boardId: string) {
     async (
       card: Card,
       action: "complete" | "reopen" | "start" | "stop",
-      opts: { recordUndo?: boolean; silent?: boolean } = {},
     ) => {
       if (offlineGuard()) return;
       const before = getProjection();
@@ -260,45 +244,20 @@ export function useBoardActions(boardId: string) {
           method: "POST",
           body: { expected_modified: card.modified ?? "" },
         });
-        if (opts.recordUndo !== false) {
-          const inverse: Record<string, "complete" | "reopen" | "start" | "stop"> = {
-            complete: "reopen",
-            reopen: "complete",
-            start: "stop",
-            stop: "start",
-          };
-          pushUndo({
-            label: `Undo ${action}`,
-            run: async () => {
-              const current =
-                findCard(getProjection(), card.uuid) ?? { ...card, modified: "" };
-              await lifecycle(current as Card, inverse[action], {
-                recordUndo: false,
-                silent: true,
-              });
-            },
-          });
-          if (!opts.silent) {
             const labels: Record<string, string> = {
               complete: "Task completed",
               reopen: "Task reopened",
               start: "Task started",
-              stop: "Task stopped",
+              stop: "Returned to Ready",
             };
             toast({
               message: labels[action],
               kind: "success",
-              actionLabel: "Undo",
-              onAction: () => runUndo(),
             });
-          }
-        }
       } catch (err) {
         qc.setQueryData(key, before);
         if (err instanceof ApiError && err.status === 409) {
-          conflictToast(err, (fresh) => {
-            void lifecycle({ ...card, modified: fresh }, action, opts);
-          });
+          toast({ message: "This task changed elsewhere. Review the latest task before trying again.", kind: "danger", actionLabel: "Reload", onAction: refresh });
         } else {
           failToast(err);
         }
@@ -327,7 +286,9 @@ export function useBoardActions(boardId: string) {
             label: "Undo edit",
             run: async () => {
               const current = findCard(getProjection(), card.uuid) ?? res.task;
-              await patchTask(current, prev, {}, { recordUndo: false });
+              if (!current.modified || !navigator.onLine) throw new Error("Cannot undo edit without a current task and connection");
+              await api(`/api/v1/tasks/${card.uuid}`, { method: "PATCH", body: { expected_modified: current.modified, set: prev } });
+              refresh();
             },
           });
         }
@@ -425,6 +386,7 @@ export function useBoardActions(boardId: string) {
   }, [toast, failToast, refresh]);
 
   return {
+    semantic,
     moveCard,
     reorderCard,
     lifecycle,

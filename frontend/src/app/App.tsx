@@ -22,7 +22,7 @@ function BoardChooser() {
   useEffect(() => {
     if (boards.data && boards.data.length > 0) {
       const valid = boardId && boards.data.some((b) => b.id === boardId);
-      if (!valid) setBoardId(boards.data[0].id);
+      if (!boardId && !valid) setBoardId(boards.data.find((b) => b.id === "lifecycle")?.id ?? boards.data[0].id);
     }
   }, [boards.data, boardId]);
 

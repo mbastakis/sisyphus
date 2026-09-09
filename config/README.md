@@ -17,8 +17,15 @@ Schema highlights:
   `template: daily`.
 - Column `match` and `write` are separate: a column may match tasks it cannot
   accept (`write: null` = read-only, rejected server-side too).
-- `write.prompt` asks the user for a value on drop (Waiting/wait date,
-  Upcoming/due date).
+- Waiting drops request specific blocker text. Native `wait` is exclusively
+  deferral, available through semantic task actions.
+- `daily` is the stable ID of Today. Its columns are empty; any legacy deadline
+  columns are normalized away at load time, with no task or deadline writes.
+- Commitment always uses `+next`; legacy `ready_tag` overrides normalize to it.
+- Startup declares `sisyphus_plan` and `sisyphus_followup` as date UDAs and
+  `sisyphus_blocker` as a string UDA, as well as rank UDAs.
+- Server `TZ` defines day boundaries. Planning/follow-up/deferral dates use
+  midnight; date-only deadlines use end-of-day. Native `scheduled` is untouched.
 - Manual ordering requires a unique `rank_uda`; dynamic project boards use the
   reserved `sisyphus_rank_project` UDA.
 - Board and column ids are stable slugs.

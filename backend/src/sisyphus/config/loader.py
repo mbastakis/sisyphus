@@ -29,4 +29,9 @@ def load_config(path: Path | None = None) -> AppConfig:
         data = yaml.safe_load(fh)
     if not isinstance(data, dict):
         raise ValueError(f"{path} does not contain a YAML mapping")
+    # Discard legacy deadline write rules before validating their nested schema.
+    # This is configuration normalization only, never task-data migration.
+    for board in data.get("boards", []):
+        if isinstance(board, dict) and board.get("id") == "daily":
+            board["columns"] = []
     return AppConfig.model_validate(data)

@@ -1,6 +1,7 @@
 import { useMemo } from "react";
 import type { BoardColumnDto, BoardSummary, Card, Projection } from "../api/types";
 import type { Command } from "../commands/registry";
+import { SORT_LABELS, type SortMode } from "./sort";
 import type { BoardActions } from "./useBoardActions";
 
 interface CommandDeps {
@@ -18,6 +19,12 @@ interface CommandDeps {
   online: boolean;
   openCreate: () => void;
   openHelp: () => void;
+  sortMode: SortMode;
+  selectSort: (mode: SortMode) => void;
+  openDeferred: () => void;
+  deferredCount: number;
+  collapsedCols: Set<string>;
+  toggleCollapse: (columnId: string) => void;
 }
 
 /** Context-aware command palette registry: focused-card actions first, then
@@ -37,6 +44,12 @@ export function useBoardCommands({
   online,
   openCreate,
   openHelp,
+  sortMode,
+  selectSort,
+  openDeferred,
+  deferredCount,
+  collapsedCols,
+  toggleCollapse,
 }: CommandDeps): Command[] {
   return useMemo(() => {
     const list: Command[] = [];
@@ -76,16 +89,18 @@ export function useBoardCommands({
                 id: "stop",
                 name: "Stop task",
                 aliases: ["pause"],
+                shortcut: "S",
                 section: "task",
-                enabled: true,
+                enabled: online && !!focusedCard.allowed_actions?.includes("stop"),
                 run: () => void actions.lifecycle(focusedCard, "stop"),
               }
             : {
                 id: "start",
                 name: "Start task",
                 aliases: ["begin", "work on"],
+                shortcut: "S",
                 section: "task",
-                enabled: true,
+                enabled: online && !!focusedCard.allowed_actions?.includes("start"),
                 run: () => void actions.lifecycle(focusedCard, "start"),
               },
         );
@@ -111,8 +126,16 @@ export function useBoardCommands({
         });
       }
     }
+    list.push({
+      id: "board-daily",
+      name: "Go to Today",
+      aliases: ["daily", "open today"],
+      section: "board",
+      enabled: true,
+      run: () => onSelectBoard("daily"),
+    });
     for (const b of boards ?? []) {
-      if (b.id === boardId) continue;
+      if (b.id === boardId || b.id === "daily") continue;
       list.push({
         id: `board-${b.id}`,
         name: `Go to board: ${b.name}`,
@@ -122,18 +145,50 @@ export function useBoardCommands({
         run: () => onSelectBoard(b.id),
       });
     }
+    if (projection && projection.view !== "today") {
+      for (const mode of Object.keys(SORT_LABELS) as SortMode[]) {
+        if (mode === sortMode) continue;
+        list.push({
+          id: `sort-${mode}`,
+          name: `Sort by ${SORT_LABELS[mode].toLowerCase()}`,
+          aliases: ["order", "sort"],
+          section: "board",
+          enabled: true,
+          run: () => selectSort(mode),
+        });
+      }
+      for (const col of projection.columns) {
+        const collapsed = collapsedCols.has(col.id);
+        list.push({
+          id: `collapse-${col.id}`,
+          name: `${collapsed ? "Expand" : "Collapse"} column: ${col.name}`,
+          aliases: [collapsed ? "show column" : "hide column"],
+          section: "board",
+          enabled: true,
+          run: () => toggleCollapse(col.id),
+        });
+      }
+    }
+    list.push({
+      id: "deferred",
+      name: `Show deferred tasks (${deferredCount})`,
+      aliases: ["postponed", "later", "snoozed"],
+      section: "board",
+      enabled: !!projection,
+      run: openDeferred,
+    });
     list.push({
       id: "new",
       name: "Create task",
       aliases: ["new", "add"],
       shortcut: "N",
       section: "global",
-      enabled: true,
+      enabled: online,
       run: openCreate,
     });
     list.push({
       id: "undo",
-      name: "Undo last mutation",
+      name: "Undo last edit or reorder",
       aliases: ["revert"],
       shortcut: "⌘Z",
       section: "global",
@@ -173,5 +228,11 @@ export function useBoardCommands({
     online,
     openCreate,
     openHelp,
+    sortMode,
+    selectSort,
+    openDeferred,
+    deferredCount,
+    collapsedCols,
+    toggleCollapse,
   ]);
 }

@@ -1,14 +1,17 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Card } from "../api/types";
 import type { BoardActions } from "../boards/useBoardActions";
 import { shortDateTime, toDateInputValue } from "../lib/dates";
 import { clearDraft, editDraftKey, loadDraft, saveDraft } from "../lib/drafts";
+import { ProjectInput } from "./ProjectInput";
+import { useOnline } from "../api/offline";
 
 interface Props {
   card: Card;
   actions: BoardActions;
   /** Known project names for autocomplete. */
   projects: string[];
+  today: string;
   initialEdit?: boolean;
   onClose: () => void;
 }
@@ -18,8 +21,6 @@ interface Draft {
   project: string;
   priority: string;
   due: string;
-  wait: string;
-  scheduled: string;
 }
 
 function toDraft(card: Card): Draft {
@@ -28,25 +29,63 @@ function toDraft(card: Card): Draft {
     project: card.project ?? "",
     priority: card.priority ?? "",
     due: toDateInputValue(card.due),
-    wait: toDateInputValue(card.wait),
-    scheduled: toDateInputValue(card.scheduled),
   };
 }
 
 interface StoredEdit {
   draft: Draft;
   annotation: string;
+  editing?: boolean;
+  semantic?: {
+    operation: "block" | "follow_up" | "defer";
+    condition: string;
+    date: string;
+    initial: { condition: string; date: string };
+  };
 }
 
-export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Props) {
+export function TaskDrawer({ card, actions, projects, today, initialEdit, onClose }: Props) {
+  const drawerRef = useRef<HTMLElement>(null);
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+  useEffect(() => {
+    if (!drawerRef.current?.contains(document.activeElement)) {
+      drawerRef.current?.querySelector<HTMLButtonElement>(".drawer-close")?.focus();
+    }
+    return () => { if (opener?.isConnected) opener.focus({ preventScroll: true }); };
+  }, [opener]);
   const draftKey = editDraftKey(card.uuid);
   // A pending edit persisted before a page reload reopens straight into
   // edit mode with the typed values intact.
   const [restored] = useState(() => loadDraft<StoredEdit>(draftKey));
-  const [editing, setEditing] = useState((initialEdit ?? false) || restored !== undefined);
+  const [editing, setEditing] = useState(restored?.editing ?? ((initialEdit ?? false) || restored !== undefined));
+  useEffect(() => {
+    if (!editing && document.activeElement === document.body) {
+      drawerRef.current?.querySelector<HTMLButtonElement>(".drawer-close")?.focus();
+    }
+  }, [editing]);
   const [draft, setDraft] = useState<Draft>(() => restored?.draft ?? toDraft(card));
   const [annotation, setAnnotation] = useState(restored?.annotation ?? "");
   const [saving, setSaving] = useState(false);
+  const online = useOnline();
+  const [operation, setOperation] = useState<"block" | "follow_up" | "defer" | null>(restored?.semantic?.operation ?? null);
+  const [condition, setCondition] = useState(restored?.semantic?.condition ?? "");
+  const [date, setDate] = useState(restored?.semantic?.date ?? "");
+  const [semanticInitial, setSemanticInitial] = useState(restored?.semantic?.initial ?? { condition: "", date: "" });
+  const beginOperation = (next: "block" | "follow_up" | "defer") => {
+    const initial = { condition: next === "block" ? card.blocker ?? "" : "", date: next === "follow_up" ? card.follow_up_on ?? "" : "" };
+    setSemanticInitial(initial);
+    setCondition(initial.condition);
+    setDate(initial.date);
+    setOperation(next);
+  };
+  const allowed = (action: string) => card.allowed_actions?.includes(action);
+  const act = async (action: string, fields: { date?: string; blocker?: string } = {}) => {
+    setSaving(true);
+    const ok = await actions.semantic(card, action, fields);
+    setSaving(false);
+    if (ok) { setOperation(null); setDate(""); setCondition(""); }
+    return ok;
+  };
 
   // A background refetch replaces `card`; only follow it while not editing so
   // in-progress edits are never overwritten by the server copy.
@@ -55,9 +94,12 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
   }, [card, editing]);
 
   useEffect(() => {
-    if (editing || annotation) saveDraft(draftKey, { draft, annotation } satisfies StoredEdit);
+    if (editing || annotation || operation) saveDraft(draftKey, {
+      draft, annotation, editing,
+      semantic: operation ? { operation, condition, date, initial: semanticInitial } : undefined,
+    } satisfies StoredEdit);
     else clearDraft(draftKey);
-  }, [draftKey, editing, draft, annotation]);
+  }, [draftKey, editing, draft, annotation, operation, condition, date, semanticInitial]);
 
   const dirty = useMemo(() => {
     const clean = toDraft(card);
@@ -65,7 +107,8 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
   }, [card, draft]);
 
   const close = () => {
-    if (editing && dirty && !window.confirm("Discard unsaved changes?")) return;
+    const semanticDirty = operation !== null && (condition !== semanticInitial.condition || date !== semanticInitial.date);
+    if (((editing && dirty) || annotation !== "" || semanticDirty) && !window.confirm("Discard unsaved changes?")) return;
     clearDraft(draftKey);
     onClose();
   };
@@ -86,7 +129,7 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
       changes.priority = draft.priority || null;
       prev.priority = card.priority;
     }
-    for (const f of ["due", "wait", "scheduled"] as const) {
+    for (const f of ["due"] as const) {
       if (draft[f] !== clean[f]) {
         changes[f] = draft[f] || null;
         prev[f] = card[f] ? toDateInputValue(card[f]) : null;
@@ -114,7 +157,7 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
   };
 
   const remove = async () => {
-    if (!window.confirm(`Delete "${card.description}"? This cannot be undone.`)) return;
+    if (!window.confirm(`Delete "${card.description}"? No undo is available in Sisyphus.`)) return;
     if (await actions.deleteTask(card)) {
       clearDraft(draftKey);
       onClose();
@@ -122,17 +165,25 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
   };
 
   return (
+    <>
+    <div
+      className="drawer-backdrop"
+      aria-hidden="true"
+      onPointerDown={(e) => e.preventDefault()}
+      onClick={(e) => { if (e.target === e.currentTarget) close(); }}
+    />
     <aside
+      ref={drawerRef}
       className="drawer"
       role="dialog"
       aria-label={card.description}
       onKeyDown={(e) => {
-        if (e.key === "Escape") close();
+        if (e.key === "Escape" && !e.defaultPrevented) close();
         e.stopPropagation();
       }}
     >
       <header className="drawer-header">
-        <span className={`drawer-status status-${card.status}`}>{card.status}</span>
+        <span className={`drawer-status status-${card.status}`}>{card.deferred ? "Deferred" : card.lifecycle}</span>
         {card.active && <span className="chip chip-active">▶ started</span>}
         <span className="column-spacer" />
         {!editing && (
@@ -158,20 +209,7 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
               />
             </label>
             <div className="field-row">
-              <label className="field">
-                <span>Project</span>
-                <input
-                  value={draft.project}
-                  onChange={(e) => setDraft({ ...draft, project: e.target.value })}
-                  list="sisyphus-projects-drawer"
-                  autoComplete="off"
-                />
-                <datalist id="sisyphus-projects-drawer">
-                  {projects.map((p) => (
-                    <option key={p} value={p} />
-                  ))}
-                </datalist>
-              </label>
+              <ProjectInput value={draft.project} onChange={(project) => setDraft({ ...draft, project })} projects={projects} />
               <label className="field">
                 <span>Priority</span>
                 <select
@@ -187,27 +225,11 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
             </div>
             <div className="field-row">
               <label className="field">
-                <span>Due</span>
+                <span>Deadline</span>
                 <input
                   type="date"
                   value={draft.due}
                   onChange={(e) => setDraft({ ...draft, due: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Wait until</span>
-                <input
-                  type="date"
-                  value={draft.wait}
-                  onChange={(e) => setDraft({ ...draft, wait: e.target.value })}
-                />
-              </label>
-              <label className="field">
-                <span>Scheduled</span>
-                <input
-                  type="date"
-                  value={draft.scheduled}
-                  onChange={(e) => setDraft({ ...draft, scheduled: e.target.value })}
                 />
               </label>
             </div>
@@ -222,7 +244,7 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
               >
                 Cancel
               </button>
-              <button className="btn-primary" disabled={saving || !dirty} onClick={save}>
+              <button className="btn-primary" disabled={!online || saving || !dirty} onClick={save}>
                 {saving ? "Saving…" : "Save"}
               </button>
             </div>
@@ -249,16 +271,16 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
                   <dd>{shortDateTime(card.due)}</dd>
                 </>
               )}
-              {card.wait && (
+              {card.deferred_until && card.deferred && (
                 <>
-                  <dt>Wait until</dt>
-                  <dd>{shortDateTime(card.wait)}</dd>
+                  <dt>Deferred until</dt>
+                  <dd>{shortDateTime(card.deferred_until)}</dd>
                 </>
               )}
-              {card.scheduled && (
+              {card.planned_for && (
                 <>
-                  <dt>Scheduled</dt>
-                  <dd>{shortDateTime(card.scheduled)}</dd>
+                  <dt>Planned for</dt>
+                  <dd>{card.planned_for}</dd>
                 </>
               )}
               {card.blocked_by_open > 0 && (
@@ -270,38 +292,62 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
                 </>
               )}
             </dl>
+            {card.blocker && <p className="blocker-condition">Blocked: {card.blocker}</p>}
+            {card.follow_up_on && <p className="muted">Follow up {card.follow_up_on}</p>}
+            {!!card.open_dependencies?.length && <section><h4>Open prerequisites</h4><ul>{card.open_dependencies.map((d) => <li key={d.uuid}>{d.description}</li>)}</ul></section>}
           </>
         )}
 
+        <fieldset className="semantic-actions" disabled={!online || saving}>
         <div className="drawer-actions">
-          {card.status !== "completed" && (
+          {(allowed("start") || allowed("stop")) && (
             <button
               className="btn-secondary btn-small"
               onClick={() => actions.lifecycle(card, card.active ? "stop" : "start")}
             >
-              {card.active ? "◼ Stop" : "▶ Start"}
+              {card.lifecycle === "doing" ? "Return to Ready" : "▶ Start"}
             </button>
           )}
-          {card.status === "completed" ? (
+          {allowed("reopen") ? (
             <button
               className="btn-secondary btn-small"
               onClick={() => actions.lifecycle(card, "reopen")}
             >
               Reopen
             </button>
-          ) : (
+          ) : allowed("complete") ? (
             <button
               className="btn-secondary btn-small"
               onClick={() => actions.lifecycle(card, "complete")}
             >
               ✓ Complete
             </button>
-          )}
-          <span className="column-spacer" />
-          <button className="btn-secondary btn-small btn-danger" onClick={remove}>
-            Delete
-          </button>
+          ) : null}
+          {card.lifecycle === "backlog" && allowed("ready") && <button className="btn-secondary btn-small" onClick={() => act("ready")}>Make ready</button>}
+          {card.lifecycle !== "doing" && card.planned_for !== today && allowed("plan_today") && <button className="btn-secondary btn-small" onClick={() => act("plan_today")}>Plan today</button>}
+          {card.planned_for && allowed("clear_plan") && <button className="btn-secondary btn-small" onClick={() => act("clear_plan")}>Clear plan</button>}
+          {card.blocker && allowed("clear_blocker") && <button className="btn-secondary btn-small" onClick={() => act("clear_blocker")}>Resolve blocker</button>}
+          {allowed("return_now") && <button className="btn-secondary btn-small" onClick={() => act("return_now")}>Return now</button>}
+          {(card.blocker || card.open_dependencies.length > 0) && allowed("follow_up") && <button className="btn-secondary btn-small" onClick={() => beginOperation("follow_up")}>Review blocker</button>}
         </div>
+        {(card.committed && allowed("backlog") || allowed("block") || allowed("defer")) && <div className="drawer-actions" role="group" aria-label="Change commitment or availability">
+          {card.committed && allowed("backlog") && <button className="btn-secondary btn-small" onClick={() => act("backlog")}>Return to backlog</button>}
+          {([['block', 'Block'], ['defer', 'Defer']] as const).map(([action, label]) => allowed(action) &&
+            <button key={action} className="btn-secondary btn-small" onClick={() => beginOperation(action)}>{label}</button>)}
+        </div>}
+        {operation && <div className="task-form semantic-form">
+          {operation === "block" && <label className="field"><span>Blocking condition</span><input autoFocus value={condition} onChange={(e) => setCondition(e.target.value)} placeholder="What must happen before this can continue?" /></label>}
+          {operation === "follow_up" && <p>{card.blocker || "Review the open prerequisites."} The task stays blocked until the condition clears.</p>}
+          <label className="field"><span>{operation === "defer" ? "Return date" : "Follow-up date (optional)"}</span><input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+          {operation === "follow_up" && date && <button className="btn-secondary btn-small" onClick={() => setDate("")}>Clear follow-up date</button>}
+          <div className="dialog-actions"><button className="btn-secondary" onClick={() => setOperation(null)}>Cancel</button>
+            <button className="btn-primary" disabled={operation === "block" ? !condition.trim() : operation === "defer" && !date}
+              onClick={() => act(operation, { ...(date ? { date } : {}), ...(operation === "block" ? { blocker: condition.trim() } : {}) })}>Save</button></div>
+        </div>}
+        <div className="drawer-danger-actions">
+          <button className="btn-secondary btn-small btn-danger" onClick={remove}>Delete</button>
+        </div>
+        </fieldset>
 
         <section className="drawer-section">
           <h4>Annotations</h4>
@@ -321,7 +367,7 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
                 if (e.key === "Enter") void addAnnotation();
               }}
             />
-            <button className="btn-secondary btn-small" onClick={addAnnotation}>
+            <button className="btn-secondary btn-small" disabled={!online || saving || !annotation.trim()} onClick={addAnnotation}>
               Add
             </button>
           </div>
@@ -358,21 +404,10 @@ export function TaskDrawer({ card, actions, projects, initialEdit, onClose }: Pr
                 <dd>{card.depends.join(", ")}</dd>
               </>
             )}
-            {card.tags.length > 0 && (
-              <>
-                <dt>tags</dt>
-                <dd title="Board-managed; not editable here">{card.tags.join(" ")}</dd>
-              </>
-            )}
-            {Object.entries(card.udas).map(([k, v]) => (
-              <div key={k} style={{ display: "contents" }}>
-                <dt>{k}</dt>
-                <dd>{v}</dd>
-              </div>
-            ))}
           </dl>
         </details>
       </div>
     </aside>
+    </>
   );
 }

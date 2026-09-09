@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const port = process.env.SISYPHUS_TEST_PORT ?? "8423";
 
 // E2E against the production-style single server: FastAPI serves the built
 // frontend (frontend/dist) plus the API, with the fake in-memory repository —
@@ -15,7 +16,7 @@ export default defineConfig({
   workers: 1,
   fullyParallel: false,
   use: {
-    baseURL: "http://127.0.0.1:8423",
+    baseURL: `http://127.0.0.1:${port}`,
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] }, grepInvert: /@mobile/ },
@@ -27,9 +28,9 @@ export default defineConfig({
   ],
   webServer: {
     command:
-      "uv run --project backend uvicorn sisyphus.main:app --host 127.0.0.1 --port 8423",
+      `uv run --project backend uvicorn sisyphus.main:app --host 127.0.0.1 --port ${port}`,
     cwd: root,
-    url: "http://127.0.0.1:8423/api/v1/health",
+    url: `http://127.0.0.1:${port}/api/v1/health`,
     reuseExistingServer: false,
     timeout: 30_000,
     env: {

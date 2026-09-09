@@ -49,8 +49,8 @@ boards:
         write: { preset: done }
 
   - id: daily
-    name: Daily
-    description: Time-focused view of pending work
+    name: Today
+    description: Ongoing work, daily intent and tasks needing attention
     template: daily
     scope:
       filter: status:pending or status:waiting
@@ -59,23 +59,4 @@ boards:
       by:
         - due: asc
         - urgency: desc
-    columns:
-      - id: overdue
-        name: Overdue
-        match: { filter: "due.before:today" }
-        write: null
-      - id: today
-        name: Today
-        match: { filter: "due:today" }
-        write:
-          set: { due: today }
-      - id: upcoming
-        name: Upcoming
-        match: { filter: "due.after:today" }
-        write:
-          prompt: { field: due, input: date }
-      - id: no-date
-        name: No date
-        match: { filter: "due.none:" }
-        write:
-          clear: [due]
+    columns: []

@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from ..application.task_service import TaskService, task_detail
+from ..application.task_service import TaskService
 from .deps import task_service
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
@@ -18,6 +18,17 @@ class LifecycleBody(BaseModel):
     expected_modified: str
 
 
+class ActionBody(LifecycleBody):
+    action: str
+    date: str | None = None
+    blocker: str | None = None
+
+
+@router.post("/{uuid}/action")
+def action(uuid: str, body: ActionBody, svc: TaskService = Depends(task_service)):
+    return {"task": svc.detail(svc.action(uuid, **body.model_dump()))}
+
+
 class AnnotateBody(BaseModel):
     description: str
 
@@ -28,37 +39,37 @@ class DeleteBody(BaseModel):
 
 @router.get("/{uuid}")
 def get_task(uuid: str, svc: TaskService = Depends(task_service)):
-    return {"task": task_detail(svc.get(uuid))}
+    return {"task": svc.detail(svc.get(uuid))}
 
 
 @router.patch("/{uuid}")
 def patch_task(uuid: str, body: PatchBody, svc: TaskService = Depends(task_service)):
-    return {"task": task_detail(svc.patch(uuid, body.expected_modified, body.set))}
+    return {"task": svc.detail(svc.patch(uuid, body.expected_modified, body.set))}
 
 
 @router.post("/{uuid}/complete")
 def complete(uuid: str, body: LifecycleBody, svc: TaskService = Depends(task_service)):
-    return {"task": task_detail(svc.lifecycle(uuid, body.expected_modified, "complete"))}
+    return {"task": svc.detail(svc.lifecycle(uuid, body.expected_modified, "complete"))}
 
 
 @router.post("/{uuid}/reopen")
 def reopen(uuid: str, body: LifecycleBody, svc: TaskService = Depends(task_service)):
-    return {"task": task_detail(svc.lifecycle(uuid, body.expected_modified, "reopen"))}
+    return {"task": svc.detail(svc.lifecycle(uuid, body.expected_modified, "reopen"))}
 
 
 @router.post("/{uuid}/start")
 def start(uuid: str, body: LifecycleBody, svc: TaskService = Depends(task_service)):
-    return {"task": task_detail(svc.lifecycle(uuid, body.expected_modified, "start"))}
+    return {"task": svc.detail(svc.lifecycle(uuid, body.expected_modified, "start"))}
 
 
 @router.post("/{uuid}/stop")
 def stop(uuid: str, body: LifecycleBody, svc: TaskService = Depends(task_service)):
-    return {"task": task_detail(svc.lifecycle(uuid, body.expected_modified, "stop"))}
+    return {"task": svc.detail(svc.lifecycle(uuid, body.expected_modified, "stop"))}
 
 
 @router.post("/{uuid}/annotations", status_code=201)
 def annotate(uuid: str, body: AnnotateBody, svc: TaskService = Depends(task_service)):
-    return {"task": task_detail(svc.annotate(uuid, body.description))}
+    return {"task": svc.detail(svc.annotate(uuid, body.description))}
 
 
 @router.post("/{uuid}/delete")

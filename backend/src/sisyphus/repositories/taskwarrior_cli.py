@@ -137,6 +137,10 @@ class TaskwarriorCliRepository:
                 args.append(f"due:{command.due.isoformat()}")
             for tag in command.tags:
                 args.append(f"+{tag}")
+            for name, value in command.udas.items():
+                args.append(f"{name}:{value}")
+            if command.depends:
+                args.append("depends:" + ",".join(command.depends))
             args += ["--", command.description]
             self._run(args)
             proc = self._run(["+LATEST", "export"])
@@ -144,7 +148,10 @@ class TaskwarriorCliRepository:
             if not rows:
                 raise BackendError("created task could not be re-read")
             self.generation += 1
-            return self._parse(rows[0])
+            task = self._parse(rows[0])
+            if command.annotations:
+                return self.apply(task.uuid, [cmd.Annotate(text) for text in command.annotations])
+            return task
 
     def apply(self, uuid: str, mutations: list[cmd.TaskMutation]) -> Task:
         with self._lock:
@@ -191,11 +198,15 @@ class TaskwarriorCliRepository:
             case cmd.Start():
                 self._run([uuid, "start"])
             case cmd.Stop():
-                self._run([uuid, "stop"])
+                # Native stop exits 1 when already stopped; policy transitions
+                # deliberately stop defensively (block, defer, reopen, Ready).
+                current = self.get(uuid)
+                if current is not None and current.start is not None:
+                    self._run([uuid, "stop"])
             case cmd.Complete():
                 self._run([uuid, "done"])
             case cmd.Reopen():
-                mod("status:pending")
+                mod("status:pending", "end:", "start:")
             case cmd.Annotate(text=text):
                 self._run([uuid, "annotate", "--", text])
             case cmd.SetDepends(uuids=uuids):

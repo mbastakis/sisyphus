@@ -7,6 +7,9 @@ import {
 } from "@dnd-kit/core";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import { useQuery } from "@tanstack/react-query";
+import { Attention, READY_PREVIEW, TodayView, readyToStart } from "./TodayView";
+import { TaskPicker } from "./TaskPicker";
 import { useBoard, useBoards, useSystem } from "../api/hooks";
 import { useOnline } from "../api/offline";
 import { knownProjects, type BoardColumnDto, type Card } from "../api/types";
@@ -17,7 +20,7 @@ import { MoveMenu } from "../components/MoveMenu";
 import { PromptDialog } from "../components/PromptDialog";
 import { CreateDialog, type CreateDraft } from "../tasks/CreateDialog";
 import { TaskDrawer } from "../tasks/TaskDrawer";
-import { timeOnly, toDateInputValue } from "../lib/dates";
+import { configureDateTimezone, timeOnly, toDateInputValue, todayInputValue } from "../lib/dates";
 import { createDraftKey, editDraftUuids, loadDraft } from "../lib/drafts";
 import { setInteractionBusy } from "../lib/idle";
 import { useMedia } from "../lib/useMedia";
@@ -30,7 +33,7 @@ import { collisionDetection, useBoardDnd } from "./useBoardDnd";
 import { useBoardCommands } from "./useBoardCommands";
 import { useBoardKeyboard } from "./useBoardKeyboard";
 import { useBoardPrefs } from "./useBoardPrefs";
-import { useCardFocus, type RenderColumn } from "./useCardFocus";
+import { cardElement, useCardFocus, type RenderColumn } from "./useCardFocus";
 
 interface Props {
   boardId: string;
@@ -38,27 +41,46 @@ interface Props {
 }
 
 interface PendingPrompt {
-  card: Card;
+  cards: Card[];
   toColumn: string;
   index?: number;
   field: string;
   columnName: string;
 }
 
+/** The Today surface has no Kanban columns; its work sections (Doing, Up
+ * next, Ready to start) act as read-only pseudo-columns so J/K/H/L, S, C and
+ * Enter work there too. */
+function todayColumn(id: string, name: string, cards: Card[]): BoardColumnDto {
+  return { id, name, read_only: true, wip_limit: null, prompt: null, count: cards.length, cards };
+}
+
 export function BoardPage({ boardId, onSelectBoard }: Props) {
   const toast = useToast();
   const boardsQuery = useBoards();
-  const query = useBoard(boardId);
+  const summary = boardsQuery.data?.find((b) => b.id === boardId);
+  const [historyBoard, setHistoryBoard] = useState<string | null>(null);
+  const history = historyBoard === boardId || summary?.group === "history";
+  const query = useBoard(boardId, history);
   const system = useSystem();
   const actions = useBoardActions(boardId);
   const projection = query.data;
+  configureDateTimezone(projection?.server_timezone ?? system.data?.server_timezone ?? "UTC");
   const isMobile = useMedia("(max-width: 768px)");
   const reducedMotion = useMedia("(prefers-reduced-motion: reduce)");
   const online = useOnline();
   const prefs = useBoardPrefs(boardId);
 
   const [search, setSearch] = useState("");
+  const [deferredOpen, setDeferredOpen] = useState(false);
   const [drawer, setDrawer] = useState<{ uuid: string; edit: boolean } | null>(null);
+  const detail = useQuery({
+    queryKey: ["task", drawer?.uuid],
+    queryFn: async () => (await api<{ task: Card }>(`/api/v1/tasks/${drawer!.uuid}`)).task,
+    enabled: !!drawer,
+    refetchInterval: 60_000,
+  });
+  useEffect(() => { if (summary?.group === "history") setHistoryBoard(boardId); }, [summary?.group, boardId]);
   const [createIn, setCreateIn] = useState<string | null | false>(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -95,6 +117,8 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
   const cardsByUuid = useMemo(() => {
     const m = new Map<string, Card>();
     projection?.columns.forEach((c) => c.cards.forEach((card) => m.set(card.uuid, card)));
+    projection?.deferred?.forEach((card) => m.set(card.uuid, card));
+    if (projection?.today) Object.values(projection.today).forEach((cards) => cards.forEach((card) => m.set(card.uuid, card)));
     return m;
   }, [projection]);
 
@@ -139,13 +163,15 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     landedTimer.current = setTimeout(() => setLandedUuid(null), 750);
   }, []);
 
-  const requestMove = useCallback(
-    (card: Card, toColumn: string, index?: number) => {
+  /** Move one or many cards to a column. A column that asks for a value
+   * (blocker, date) asks once and applies the answer to every card. */
+  const requestMoveMany = useCallback(
+    (cards: Card[], toColumn: string, index?: number) => {
       const col = projection?.columns.find((c) => c.id === toColumn);
-      if (!col || col.read_only) return;
+      if (!col || col.read_only || cards.length === 0) return;
       if (col.prompt) {
         setPendingPrompt({
-          card,
+          cards,
           toColumn,
           index,
           field: col.prompt.field,
@@ -153,11 +179,18 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         });
         return;
       }
-      void actions
-        .moveCard({ card, toColumn, index })
-        .then((ok) => ok && markLanded(card.uuid));
+      for (const card of cards) {
+        void actions
+          .moveCard({ card, toColumn, index })
+          .then((ok) => ok && markLanded(card.uuid));
+      }
     },
     [projection, actions, markLanded],
+  );
+
+  const requestMove = useCallback(
+    (card: Card, toColumn: string, index?: number) => requestMoveMany([card], toColumn, index),
+    [requestMoveMany],
   );
 
   const dnd = useBoardDnd({
@@ -193,7 +226,24 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     [renderColumns, isMobile, prefs.collapsedCols],
   );
 
-  const focus = useCardFocus(visibleColumns);
+  // What the roving focus walks over: the visible Kanban columns, or the
+  // Today surface's "Up next" and "Doing" sections.
+  const focusColumns = useMemo<RenderColumn[]>(() => {
+    if (projection?.view === "today" && projection.today) {
+      const doing = filterCards(projection.today.doing);
+      const chosen = filterCards(projection.today.chosen);
+      const ready = filterCards(readyToStart(projection.today)).slice(0, READY_PREVIEW);
+      return [
+        { col: todayColumn("doing", "Doing", doing), cards: doing },
+        { col: todayColumn("chosen", "Up next", chosen), cards: chosen },
+        { col: todayColumn("ready", "Ready to start", ready), cards: ready },
+      ];
+    }
+    if (isMobile) return visibleColumns.filter(({ col }) => col.id === (prefs.mobileColumn ?? projection?.board.mobile_default_column ?? projection?.columns[0]?.id));
+    return visibleColumns;
+  }, [projection, filterCards, isMobile, visibleColumns, prefs.mobileColumn]);
+
+  const focus = useCardFocus(focusColumns);
 
   useEffect(() => {
     focus.clear();
@@ -201,38 +251,91 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardId]);
 
+  /** Cards an action applies to: the selection when there is one, else the
+   * focused card. */
+  const targetCards = useCallback((): Card[] => {
+    const uuids = focus.selection.size > 0 ? [...focus.selection] : focus.focusUuid ? [focus.focusUuid] : [];
+    return uuids.map((u) => cardsByUuid.get(u)).filter((c): c is Card => c !== undefined);
+  }, [focus.selection, focus.focusUuid, cardsByUuid]);
+
   const keyboardMove = useCallback(
     (dir: -1 | 1) => {
-      if (!projection || !focus.focusUuid) return;
+      if (!projection) return;
+      const cols = projection.columns;
+      const groups = new Map<string, Card[]>();
+      for (const card of targetCards()) {
+        const loc = columnOf(card.uuid);
+        if (!loc) continue;
+        let i = cols.findIndex((c) => c.id === loc.col.id) + dir;
+        while (i >= 0 && i < cols.length && cols[i].read_only) i += dir;
+        if (i < 0 || i >= cols.length) continue;
+        groups.set(cols[i].id, [...(groups.get(cols[i].id) ?? []), card]);
+      }
+      groups.forEach((cards, toColumn) => requestMoveMany(cards, toColumn));
+      if (focus.selection.size > 0) focus.clearSelection();
+    },
+    [projection, targetCards, columnOf, requestMoveMany, focus],
+  );
+
+  const canReorder =
+    !!projection &&
+    projection.board.ordering_mode === "manual" &&
+    prefs.sortMode === "default" &&
+    search.trim() === "" &&
+    !history &&
+    projection.view !== "today";
+
+  const keyboardReorder = useCallback(
+    (dir: -1 | 1) => {
+      if (!focus.focusUuid) return;
       const loc = columnOf(focus.focusUuid);
       const card = cardsByUuid.get(focus.focusUuid);
       if (!loc || !card) return;
-      const cols = projection.columns;
-      let i = cols.findIndex((c) => c.id === loc.col.id) + dir;
-      while (i >= 0 && i < cols.length) {
-        if (!cols[i].read_only) {
-          requestMove(card, cols[i].id);
-          return;
-        }
-        i += dir;
+      if (!canReorder) {
+        toast({
+          message:
+            prefs.sortMode !== "default"
+              ? "Switch sort to Board order to reorder cards"
+              : "This board does not keep a manual order",
+          kind: "info",
+          duration: 2500,
+        });
+        return;
       }
+      const to = loc.index + dir;
+      if (to < 0 || to >= loc.col.cards.length) return;
+      void actions.reorderCard(card, to, loc.index).then(() => markLanded(card.uuid));
     },
-    [projection, focus.focusUuid, columnOf, cardsByUuid, requestMove],
+    [focus.focusUuid, columnOf, cardsByUuid, canReorder, prefs.sortMode, actions, markLanded, toast],
   );
 
   const completeFocused = useCallback(() => {
-    const targets =
-      focus.selection.size > 0
-        ? [...focus.selection]
-        : focus.focusUuid
-          ? [focus.focusUuid]
-          : [];
-    for (const uuid of targets) {
-      const card = cardsByUuid.get(uuid);
-      if (card && card.status !== "completed") void actions.lifecycle(card, "complete");
+    const targets = targetCards().filter((c) => c.status !== "completed");
+    if (targets.length === 0) return;
+    // Single-card completion hands focus to the neighbour so J/C, J/C flows
+    // never strand the cursor on a card that just left the column.
+    if (focus.selection.size === 0 && focus.focusUuid) {
+      const col = focusColumns.find(({ cards }) => cards.some((c) => c.uuid === focus.focusUuid));
+      if (col) {
+        const i = col.cards.findIndex((c) => c.uuid === focus.focusUuid);
+        const next = col.cards[i + 1] ?? col.cards[i - 1];
+        if (next) focus.setFocusUuid(next.uuid);
+      }
     }
-    focus.setSelection(new Set());
-  }, [focus, cardsByUuid, actions]);
+    for (const card of targets) void actions.lifecycle(card, "complete");
+    focus.clearSelection();
+  }, [targetCards, focus, focusColumns, actions]);
+
+  const toggleStartFocused = useCallback(() => {
+    const card = focus.focusUuid ? cardsByUuid.get(focus.focusUuid) : undefined;
+    if (!card || card.status === "completed") return;
+    const action = card.active ? "stop" : "start";
+    if (!card.allowed_actions?.includes(action)) {
+      toast({ message: card.active ? "Cannot stop this task here" : "Only Ready tasks can be started", kind: "info", duration: 2500 });
+      return;
+    }
+    void actions.lifecycle(card, action);
+  }, [focus.focusUuid, cardsByUuid, actions, toast]);
 
   const anyOverlayOpen =
     paletteOpen ||
@@ -243,6 +346,19 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     pendingPrompt !== null ||
     createIn !== false ||
     drawer !== null;
+
+  // Focus restoration: when the last overlay closes and nothing else has
+  // claimed focus, put the keyboard back on the focused card.
+  const wasOverlayOpen = useRef(false);
+  useEffect(() => {
+    if (wasOverlayOpen.current && !anyOverlayOpen && focus.focusUuid) {
+      const active = document.activeElement;
+      if (!active || active === document.body) {
+        cardElement(focus.focusUuid)?.focus({ preventScroll: true });
+      }
+    }
+    wasOverlayOpen.current = anyOverlayOpen;
+  }, [anyOverlayOpen, focus.focusUuid]);
 
   // While a dialog is open, whole-page actions (service-worker reload,
   // re-login navigation) are held back so typing is never interrupted.
@@ -256,17 +372,25 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     {
       anyOverlayOpen,
       focusUuid: focus.focusUuid,
+      hasSelection: focus.selection.size > 0,
       moveFocus: focus.moveFocus,
       moveFocusColumn: focus.moveFocusColumn,
       keyboardMove,
+      keyboardReorder,
       completeFocused,
+      toggleStartFocused,
       focusFirst: focus.focusFirst,
+      focusLast: focus.focusLast,
+      focusColumnEdge: focus.focusColumnEdge,
       toggleSelected: focus.toggleSelected,
+      selectColumn: focus.selectColumn,
+      clearSelection: focus.clearSelection,
       clearFocus: focus.clear,
       openDrawer: (uuid, edit) => setDrawer({ uuid, edit }),
       openCreate: () => setCreateIn(null),
       openSwitcher: () => setSwitcherOpen(true),
       openMoveMenu: () => setMoveMenuOpen(true),
+      openSortMenu: () => setSortMenuOpen(true),
       openHelp: () => setHelpOpen(true),
       togglePalette: () => setPaletteOpen((v) => !v),
       closeOverlays: () => {
@@ -275,7 +399,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         setMoveMenuOpen(false);
         setSwitcherOpen(false);
         setSortMenuOpen(false);
-        setDrawer(null);
+        setPendingPrompt(null);
       },
       runUndo: () => void actions.runUndo(),
       clearSearch: () => setSearch(""),
@@ -292,11 +416,11 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
 
   // -- render ----------------------------------------------------------------
 
-  const drawerCard = drawer ? cardsByUuid.get(drawer.uuid) : undefined;
+  const drawerCard = drawer ? detail.data ?? cardsByUuid.get(drawer.uuid) : undefined;
   const isEmpty =
-    projection && !search.trim() && projection.columns.every((c) => c.cards.length === 0);
+    projection && projection.view !== "today" && !search.trim() && cardsByUuid.size === 0;
   const boardOffline = !online || (query.isError && projection !== undefined);
-  const dndEnabled = !isMobile && search.trim() === "" && !boardOffline;
+  const dndEnabled = !history && projection?.view !== "today" && !isMobile && search.trim() === "" && !boardOffline;
 
   const mobileActive =
     (isMobile &&
@@ -308,6 +432,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
   const activeCard = dnd.activeUuid ? cardsByUuid.get(dnd.activeUuid) : undefined;
   const boardProject = projection?.board.project ?? null;
   const projects = useMemo(() => knownProjects(boardsQuery.data), [boardsQuery.data]);
+  const deferredCount = projection?.deferred?.length ?? 0;
 
   const syncNow = useCallback(async () => {
     if (!online || syncing) return;
@@ -348,7 +473,31 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
     online: !boardOffline,
     openCreate: () => setCreateIn(null),
     openHelp: () => setHelpOpen(true),
+    sortMode: prefs.sortMode,
+    selectSort: prefs.selectSort,
+    openDeferred: () => setDeferredOpen(true),
+    deferredCount,
+    collapsedCols: prefs.collapsedCols,
+    toggleCollapse: prefs.toggleCollapse,
   });
+
+  const deferredButton = projection && (
+    <button
+      className="btn-secondary btn-deferred"
+      aria-label={`Deferred (${deferredCount})`}
+      title="Tasks intentionally postponed until a later date"
+      onClick={() => setDeferredOpen(true)}
+    >
+      Deferred <span className="count-pill tnum">{deferredCount}</span>
+    </button>
+  );
+
+  const openCard = (card: Card) => {
+    focus.setFocusUuid(card.uuid);
+    setDrawer({ uuid: card.uuid, edit: false });
+  };
+
+  const selectionCount = focus.selection.size;
 
   return (
     <div className="shell">
@@ -365,6 +514,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         onSearch={setSearch}
         switcherOpen={switcherOpen}
         onToggleSwitcher={() => setSwitcherOpen((v) => !v)}
+        onCloseSwitcher={() => setSwitcherOpen(false)}
         onSelectBoard={(id) => {
           setSwitcherOpen(false);
           onSelectBoard(id);
@@ -372,10 +522,12 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         sortMode={prefs.sortMode}
         sortMenuOpen={sortMenuOpen}
         onToggleSortMenu={() => setSortMenuOpen((v) => !v)}
+        onCloseSortMenu={() => setSortMenuOpen(false)}
         onSelectSort={(mode) => {
           prefs.selectSort(mode);
           setSortMenuOpen(false);
         }}
+        extra={!isMobile && deferredButton}
         syncing={syncing}
         onSync={() => void syncNow()}
         onCreate={() => setCreateIn(null)}
@@ -385,7 +537,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
       {tzMismatch && system.data && (
         <div className="banner banner-warning">
           Server timezone ({system.data.server_timezone}) differs from your browser — due
-          dates and Today/Overdue columns follow the server clock.
+          dates and daily plans follow the server clock.
         </div>
       )}
       {boardOffline && projection && (
@@ -395,7 +547,23 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         </div>
       )}
 
-      <main className="board" role="region" aria-label="Board">
+      <main className={`board ${projection?.view === "today" || history ? "board-list" : ""}`} role="region" aria-label="Board">
+        {isMobile && projection && <div className="board-utilities">{deferredButton}</div>}
+        {summary?.group === "later" && <p className="project-state">No committed work · This project contains backlog or deferred tasks.</p>}
+        {summary?.group === "history" && <p className="project-state">No unfinished tasks. This project is now in History.</p>}
+        {history && summary?.group !== "history" && <p className="project-state">History <button className="btn-secondary btn-small" onClick={() => setHistoryBoard(null)}>Show unfinished tasks</button></p>}
+        {projection && !history && <Attention today={projection.today} onOpen={openCard} />}
+        {projection?.view === "today" && (
+          <TodayView
+            today={projection.today}
+            filter={filterCards}
+            actions={actions}
+            online={!boardOffline}
+            onOpen={openCard}
+            focusUuid={focus.focusUuid}
+            onFocusCard={(card) => focus.setFocusUuid(card.uuid)}
+          />
+        )}
         {showSkeleton && (
           <div className="board-columns">
             {[0, 1, 2, 3].map((i) => (
@@ -424,7 +592,8 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
             </button>
           </div>
         )}
-        {projection && !isEmpty && (
+        {projection && history && <section className="history-tasks"><h2>Completed tasks</h2><div className="disclosed-tasks">{filterCards(projection.columns.flatMap((c) => c.cards)).map((card) => <div key={card.uuid}><TaskCard card={card} boardProject={boardProject} onClick={() => openCard(card)} /><small className="surface-hint">Completed {card.end ? new Date(card.end).toLocaleDateString() : ""}</small></div>)}</div></section>}
+        {projection && !history && projection.view !== "today" && !isEmpty && (
           <>
             {isMobile && (
               <div className="mobile-tabs" role="tablist">
@@ -466,9 +635,11 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
                       dndEnabled={dndEnabled}
                       collapsed={!isMobile && prefs.collapsedCols.has(col.id)}
                       onToggleCollapse={prefs.toggleCollapse}
-                      onCardClick={(card) => {
+                      onCardClick={openCard}
+                      onCardFocus={(card) => focus.setFocusUuid(card.uuid)}
+                      onToggleSelect={(card) => {
                         focus.setFocusUuid(card.uuid);
-                        setDrawer({ uuid: card.uuid, edit: false });
+                        focus.toggleSelected(card.uuid);
                       }}
                       onCreate={(columnId) => setCreateIn(columnId)}
                     />
@@ -486,6 +657,25 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
         )}
       </main>
 
+      {selectionCount > 0 && !isMobile && (
+        <div className="selection-bar" role="status" aria-live="polite">
+          <span className="selection-count">
+            <strong className="tnum">{selectionCount}</strong> selected
+          </span>
+          <button className="btn-secondary btn-small" onClick={completeFocused} disabled={boardOffline}>
+            <kbd>C</kbd> Complete
+          </button>
+          <button className="btn-secondary btn-small" onClick={() => setMoveMenuOpen(true)} disabled={boardOffline}>
+            <kbd>M</kbd> Move…
+          </button>
+          <button className="btn-secondary btn-small" onClick={focus.clearSelection}>
+            <kbd>Esc</kbd> Clear
+          </button>
+        </div>
+      )}
+
+      {deferredOpen && projection && <TaskPicker title="Deferred tasks" cards={projection.deferred ?? []} deferred actions={actions} online={!boardOffline} onClose={() => setDeferredOpen(false)} onOpen={openCard} />}
+
       {isMobile && (
         <nav className="bottom-bar">
           <button onClick={() => setSwitcherOpen(true)}>Boards</button>
@@ -493,6 +683,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
             className="bottom-create"
             onClick={() => setCreateIn(null)}
             disabled={boardOffline}
+            aria-label="Create task"
           >
             ＋
           </button>
@@ -509,6 +700,8 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
 
       {drawerCard && (
         <TaskDrawer
+          today={todayInputValue()}
+          key={drawerCard.uuid}
           card={drawerCard}
           actions={actions}
           projects={projects}
@@ -518,6 +711,7 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
       )}
       {createIn !== false && projection && (
         <CreateDialog
+          today={todayInputValue()}
           columns={projection.columns}
           initialColumn={createIn}
           initialProject={boardProject}
@@ -529,24 +723,23 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
       )}
       {pendingPrompt && (
         <PromptDialog
-          title={`Move to ${pendingPrompt.columnName}`}
-          fieldLabel={`${pendingPrompt.field} date`}
+          title={`Move ${pendingPrompt.cards.length > 1 ? `${pendingPrompt.cards.length} tasks` : ""} to ${pendingPrompt.columnName}`.replace(/\s+/g, " ")}
+          inputType={pendingPrompt.field === "blocker" ? "text" : "date"}
+          fieldLabel={pendingPrompt.field === "blocker" ? "Blocking condition" : `${pendingPrompt.field} date`}
           initial={
-            pendingPrompt.field === "due"
-              ? toDateInputValue(pendingPrompt.card.due) || undefined
-              : toDateInputValue(pendingPrompt.card.wait) || undefined
+            pendingPrompt.field === "blocker" ? pendingPrompt.cards[0].blocker ?? "" : pendingPrompt.field === "due"
+              ? toDateInputValue(pendingPrompt.cards[0].due) || undefined
+              : toDateInputValue(pendingPrompt.cards[0].wait) || undefined
           }
           onConfirm={(value) => {
             const p = pendingPrompt;
             setPendingPrompt(null);
-            void actions
-              .moveCard({
-                card: p.card,
-                toColumn: p.toColumn,
-                index: p.index,
-                promptValue: value,
-              })
-              .then((ok) => ok && markLanded(p.card.uuid));
+            for (const card of p.cards) {
+              void actions
+                .moveCard({ card, toColumn: p.toColumn, index: p.index, promptValue: value })
+                .then((ok) => ok && markLanded(card.uuid));
+            }
+            focus.clearSelection();
           }}
           onCancel={() => setPendingPrompt(null)}
         />
@@ -554,11 +747,20 @@ export function BoardPage({ boardId, onSelectBoard }: Props) {
       {moveMenuOpen && focusedCard && projection && (
         <MoveMenu
           card={focusedCard}
+          count={selectionCount > 0 ? selectionCount : 1}
           columns={projection.columns}
-          currentColumnId={columnOf(focusedCard.uuid)?.col.id ?? null}
+          currentColumnId={
+            selectionCount > 0
+              ? (() => {
+                  const ids = new Set(targetCards().map((c) => columnOf(c.uuid)?.col.id));
+                  return ids.size === 1 ? [...ids][0] ?? null : null;
+                })()
+              : columnOf(focusedCard.uuid)?.col.id ?? null
+          }
           onMove={(columnId) => {
             setMoveMenuOpen(false);
-            requestMove(focusedCard, columnId);
+            requestMoveMany(targetCards(), columnId);
+            focus.clearSelection();
           }}
           onClose={() => setMoveMenuOpen(false)}
         />

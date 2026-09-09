@@ -8,15 +8,17 @@ export function useBoards() {
     queryKey: ["boards"],
     queryFn: () => api<BoardSummary[]>("/api/v1/boards"),
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 }
 
-export function useBoard(boardId: string | null) {
+export function useBoard(boardId: string | null, history = false) {
+  const cacheId = `${boardId}${history ? ":history" : ""}`;
   return useQuery({
-    queryKey: ["board", boardId],
+    queryKey: history ? ["board", boardId, "history"] : ["board", boardId],
     queryFn: async () => {
-      const projection = await api<Projection>(`/api/v1/boards/${boardId}`);
-      if (boardId) saveProjectionCache(boardId, projection);
+      const projection = await api<Projection>(`/api/v1/boards/${boardId}${history ? "?history=true" : ""}`);
+      if (boardId) saveProjectionCache(cacheId, projection);
       return projection;
     },
     enabled: boardId !== null,
@@ -24,7 +26,8 @@ export function useBoard(boardId: string | null) {
     // paints instantly and stays inspectable offline. The offline banner
     // (BoardPage) marks it stale whenever the live fetch is failing.
     placeholderData: () =>
-      boardId ? loadProjectionCache(boardId)?.projection : undefined,
+      boardId ? loadProjectionCache(cacheId)?.projection : undefined,
+    refetchInterval: 60_000,
     refetchOnWindowFocus: true,
     refetchOnReconnect: true,
   });

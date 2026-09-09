@@ -4,7 +4,8 @@ A personal, Kanban-first PWA over Taskwarrior. Taskwarrior stays the canonical
 system of record; Sisyphus adds a board-oriented HTTP API (FastAPI) and a
 keyboard-driven React frontend themed with Nocturne Rose.
 
-See `docs/architecture-plan.md` for the full architecture and
+See `CONTEXT.md` and `docs/adr/` for current product decisions,
+`docs/architecture-plan.md` for the original architecture plan, and
 `docs/deployment.md` for the environment-variable table.
 
 ## Layout
@@ -19,25 +20,47 @@ docs/       architecture plan, deployment reference
 
 ## Projects and tags
 
-Projects are the first-class way to organise work. Every exact project name
-that has tasks in scope (pending, waiting, or completed in the last 14 days)
-gets its own lifecycle board automatically under **Projects** in the board
-switcher. Creating a task with a new project name makes a new board appear;
-when the last task leaves scope the board disappears. Dotted Taskwarrior
-projects remain exact: `work.sisyphus` does not invent a separate `work`
-board or include sibling projects. `config/boards.yaml` is restricted to the
-two core boards, Lifecycle and Daily.
+Projects are inferred from exact Taskwarrior project names. Active projects
+have committed unfinished work; Later contains only backlog or deferred work;
+History makes completed-only projects searchable beyond the recent Done window.
+Changing groups does not navigate away from an open project. Dotted names remain
+exact: `work.sisyphus` does not invent a separate `work` board or include siblings.
+There are no independent project statuses to maintain.
 
-Tags are never shown or edited in the UI. The only tag Sisyphus touches is
-the board-managed Ready marker (`ready_tag`, default `next`, matching the
-CLI convention `+next`): dragging a card between Backlog and Ready adds or
-removes it. Tags set from the CLI still work and are visible under *Raw
-details* in the task drawer.
+There is no categorization-tag workflow. `+next` is the internal commitment
+marker shared with the agent: committing work adds it, and withdrawing
+commitment removes it. Starting work establishes commitment; blockers and
+deferral preserve it. Existing unrelated Taskwarrior data is not automatically
+rewritten.
 
 All project boards share one rank UDA, `sisyphus_rank_project`; because each
 task has one exact project, this is enough to preserve its manual position.
 The container entrypoint declares it in the generated taskrc alongside the
 core boards' rank UDAs.
+
+## Working with Tasks
+
+Lifecycle is the default: capture in Backlog, commit a small pool to Ready,
+start work in Doing, and complete it in Done. Waiting means committed work has
+a real blocker; postponing work is a separate Defer action. A break or a new
+day does not require stopping and restarting a Task.
+
+Today (stable board ID `daily`) shows ongoing work and Tasks deliberately chosen
+for today. Due/overdue Tasks and blocker follow-ups appear for attention without
+automatically becoming daily commitments. Planning is optional: pull directly
+from the inline Ready preview and start, or drag between Ready, Up next, and Doing.
+The command palette includes Go to Today. Deferred, attention, and completed-today
+panels are keyboard-accessible and dismiss on outside click.
+Unfinished daily selections remain reviewable rather than
+silently rolling forward.
+
+Deadlines use `due`, deferral uses `wait`, and commitment uses `+next`. Three
+UDAs hold chosen day (`sisyphus_plan`), the current external blocker
+(`sisyphus_blocker`), and its review day (`sisyphus_followup`). See
+`docs/adr/0010-taskwarrior-field-mapping.md` for the shared field contract.
+Native `scheduled` is not repurposed as daily intent.
+
+See [Using Sisyphus](docs/workflow.md) for the short user-facing workflow.
 
 ## Development (safe by default)
 
@@ -46,8 +69,8 @@ tasks — your real Taskwarrior replica is never touched. The topbar shows a
 `FAKE DATA` badge as a reminder.
 
 ```bash
-task dev:backend    # uvicorn on 127.0.0.1:8422 (fake data, hot reload)
-task dev:frontend   # Vite on http://localhost:5173 (proxies /api)
+mise exec task -- task dev:backend    # uvicorn on 127.0.0.1:8422 (fake data, hot reload)
+mise exec task -- task dev:frontend   # Vite on http://localhost:5173 (proxies /api)
 ```
 
 Talking to a real replica requires three explicit opt-ins:
@@ -57,13 +80,19 @@ Talking to a real replica requires three explicit opt-ins:
 ## Tests and checks
 
 ```bash
-task test:backend     # backend unit + API tests
-task test:e2e         # Playwright e2e against a production-style server (fake data)
-task validate         # lint + typecheck + config check + all tests
-task config:validate  # validate config/boards.yaml only
+mise exec task -- task test:backend     # backend unit + API tests
+mise exec task -- task test:e2e         # Playwright e2e against a production-style server (fake data)
+mise exec task -- task validate         # lint + typecheck + config check + all tests
+mise exec task -- task config:validate  # validate config/boards.yaml only
 ```
 
-First e2e run: `task e2e:sync` installs Playwright and Chromium.
+First e2e run: `mise exec task -- task e2e:sync` installs Playwright and Chromium.
+
+With a built image available, `mise exec task -- task test:taskwarrior` checks
+native planning primitives against its Taskwarrior binary in a disposable
+container replica. Override the image with `IMAGE=sisyphus:<tag>`.
+`mise exec task -- task test:cli` additionally checks current application services
+against that binary, mounting only read-only source and config into the container.
 
 ## Theme updates
 
@@ -87,7 +116,7 @@ through the normal application workflow.
 
 ## Production
 
-`task build:image` builds a multi-stage container: Node builds the frontend,
+`mise exec task -- task build:image` builds a multi-stage container: Node builds the frontend,
 uv installs the backend, Taskwarrior 3.4.2 is compiled and pinned, and FastAPI
 serves both the API and the built frontend on port 8080.
 

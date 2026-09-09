@@ -20,13 +20,27 @@ tasks:
     desc: Run backend unit and API tests
     dir: backend
     cmds:
-      - uv run pytest
+      - uv run python -m pytest
 
   lint:
     desc: Lint the backend
     dir: backend
     cmds:
       - uv run --with ruff ruff check src tests
+
+  test:taskwarrior:
+    desc: Check native planning primitives in a disposable pinned-image replica
+    vars:
+      IMAGE: '{{default "sisyphus:latest" .IMAGE}}'
+    cmds:
+      - docker run --rm -i --entrypoint python '{{.IMAGE}}' - < scripts/check-taskwarrior-contract.py
+
+  test:cli:
+    desc: Check current services against a disposable pinned Taskwarrior replica
+    vars:
+      IMAGE: '{{default "sisyphus:latest" .IMAGE}}'
+    cmds:
+      - docker run --rm -i --entrypoint python -v '{{.TASKFILE_DIR}}/backend/src:/check/src:ro' -v '{{.TASKFILE_DIR}}/config:/check/config:ro' -e PYTHONPATH=/check/src '{{.IMAGE}}' - < scripts/check-cli-planning.py
 
   typecheck:
     desc: Typecheck the frontend

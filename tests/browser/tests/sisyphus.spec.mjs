@@ -13,7 +13,7 @@ test.describe.configure({ mode: "serial" });
 const gotoBoard = async (page, boardId = "lifecycle") => {
   await page.addInitScript((id) => localStorage.setItem("sisyphus.lastBoard", id), boardId);
   await page.goto("/");
-  await expect(page.locator(".column").first()).toBeVisible();
+  await expect(page.locator(boardId === "daily" ? ".today-view" : ".column").first()).toBeVisible();
 };
 
 test("board renders with columns, cards, and safety badge", async ({ page }) => {
@@ -46,7 +46,7 @@ test("PWA shell: manifest and service worker are served", async ({ page, request
   expect(sw.ok()).toBeTruthy();
 });
 
-test("keyboard move shows undo toast and undo restores", async ({ page }) => {
+test("keyboard move succeeds without offering an incorrect inverse undo", async ({ page }) => {
   await gotoBoard(page);
   await page.keyboard.press("g");
   const focused = page.locator(".card-focused");
@@ -56,21 +56,18 @@ test("keyboard move shows undo toast and undo restores", async ({ page }) => {
   await expect(page.locator(".toast", { hasText: "Moved to" })).toBeVisible();
   const ready = page.locator(".column", { has: page.getByRole("heading", { name: "Ready" }) });
   await expect(ready.locator(".card-title", { hasText: title })).toBeVisible();
-  await page.keyboard.press("u");
-  const backlog = page.locator(".column", {
-    has: page.getByRole("heading", { name: "Backlog" }),
-  });
-  await expect(backlog.locator(".card-title", { hasText: title })).toBeVisible();
+  await expect(page.locator(".toast").getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
 });
 
-test("waiting column prompts for a date", async ({ page }) => {
+test("waiting column asks for the blocking condition, never a wait date", async ({ page }) => {
   await gotoBoard(page);
   await page.keyboard.press("g");
   await page.keyboard.press("m");
   await page.locator(".move-menu button", { hasText: "Waiting" }).click();
   const dialog = page.locator(".dialog", { hasText: "Move to Waiting" });
   await expect(dialog).toBeVisible();
-  await dialog.locator('input[type="date"]').fill("2027-01-15");
+  await expect(dialog.locator('input[type="date"]')).toHaveCount(0);
+  await dialog.getByLabel("Blocking condition").fill("Accountant must send the statement");
   await dialog.locator(".btn-primary").click();
   await expect(page.locator(".toast", { hasText: "Moved to Waiting" })).toBeVisible();
 });
@@ -97,13 +94,14 @@ test("project boards are dynamic and tags stay hidden", async ({ page }) => {
 
   // The new project shows up in the switcher under Projects and opens a board.
   await page.locator(".board-switcher").click();
-  await expect(page.locator(".switcher-section", { hasText: "Projects" })).toBeVisible();
+  await page.getByLabel("Search projects").fill("e2e-fresh");
   await page.locator(".switcher-project", { hasText: "e2e-fresh" }).click();
   await expect(page.locator(".topbar .board-name")).toHaveText("e2e-fresh");
   await expect(page.locator(".column")).toHaveCount(5);
   await expect(page.locator(".card")).toHaveCount(1);
   // Nested project names remain exact boards; no synthetic parent board is invented.
   await page.locator(".board-switcher").click();
+  await page.getByLabel("Search projects").fill("work.sisyphus");
   await expect(page.locator(".switcher-project", { hasText: "work.sisyphus" })).toBeVisible();
   await expect(page.locator('.switcher-project[title="work"]')).toHaveCount(0);
   await page.locator(".switcher-project", { hasText: "work.sisyphus" }).click();
@@ -113,13 +111,16 @@ test("project boards are dynamic and tags stay hidden", async ({ page }) => {
   await expect(page.locator(".card .chip-plain", { hasText: "#" })).toHaveCount(0);
 });
 
-test("daily board overdue column is read-only", async ({ page }) => {
+test("Today supports pulling work with inline Ready and a quiet Done panel", async ({ page }) => {
   await gotoBoard(page, "daily");
-  await expect(page.locator(".topbar .board-name")).toHaveText("Daily");
-  const overdue = page.locator(".column", {
-    has: page.getByRole("heading", { name: "Overdue" }),
-  });
-  await expect(overdue.locator(".column-lock")).toBeVisible();
+  await expect(page.locator(".topbar .board-name")).toHaveText("Today");
+  await expect(page.getByRole("heading", { name: /^Doing/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /^Up next/ })).toBeVisible();
+  await expect(page.locator(".column")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Choose from Ready", exact: true })).toBeVisible();
+  await expect(page.getByRole("region", { name: "Ready to start", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: /^Done today/ })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Done today", exact: true })).toHaveCount(0);
 });
 
 test("collapse and sort persist across reload", async ({ page }) => {

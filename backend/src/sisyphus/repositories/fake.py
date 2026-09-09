@@ -49,8 +49,6 @@ class FakeTaskRepository:
         with self._lock:
             out = []
             for t in self._tasks.values():
-                if t.status == "deleted":
-                    continue
                 if t.status not in filter.statuses:
                     continue
                 if (
@@ -91,6 +89,9 @@ class FakeTaskRepository:
                 due=command.due,
                 entry=now,
                 modified=now,
+                udas=dict(command.udas),
+                depends=list(command.depends),
+                annotations=[Annotation(now, text) for text in command.annotations],
             )
             task.urgency = _urgency(task)
             self._tasks[task.uuid] = task
@@ -230,16 +231,16 @@ class FakeTaskRepository:
 
         # Doing
         add("Wire the taskwarrior CLI adapter behind the repository port",
-            project="work.sisyphus", tags=["next", "deep"], priority="H", due=1,
+            project="work.sisyphus", tags=["next"], priority="H", due=1,
             started=True, age_days=6,
             annotations=["Blocked on deciding subprocess timeout policy — resolved: 10s."])
         add("Prune the tomato plants before the heat wave",
-            project="home.garden", tags=["outdoor"], priority="M", due=0, started=True, age_days=2)
+            project="home.garden", tags=["next"], priority="M", due=0, started=True, age_days=2)
 
         # Ready
         add("Write contract tests for the board projection DTO",
-            project="work.sisyphus", tags=["next", "tests"], priority="M", due=2, age_days=4)
-        add("Replace the kitchen tap washer", project="home", tags=["next", "diy"],
+            project="work.sisyphus", tags=["next"], priority="M", due=2, age_days=4)
+        add("Replace the kitchen tap washer", project="home", tags=["next"],
             priority="L", age_days=21)
         add("Renew the domain registration", project="personal.admin",
             tags=["next"], priority="H", due=3, age_days=30)
@@ -247,26 +248,26 @@ class FakeTaskRepository:
 
         # Backlog
         blocked_parent = add("Order raised-bed soil and compost",
-                             project="home.garden", tags=["outdoor"], due=6, age_days=12)
+                             project="home.garden", due=6, age_days=12)
         blocked = add("Plant the autumn spinach and kale",
-                      project="home.garden", tags=["outdoor"], priority="M", due=9, age_days=12)
+                      project="home.garden", priority="M", due=9, age_days=12)
         blocked.depends = [blocked_parent.uuid]
         add("Read the TaskChampion sync protocol notes", project="work.sisyphus",
-            tags=["reading"], age_days=15)
+            age_days=15)
         add("Digitize the old photo albums", project="personal", age_days=90)
-        add("Research e-ink dashboards for the hallway", project="home", tags=["someday"],
+        add("Research e-ink dashboards for the hallway", project="home",
             age_days=45)
         add("Book dentist appointment", project="personal.health", priority="M", due=-2,
             age_days=20, annotations=["Dr. Papadopoulos is on leave until Monday."])
-        add("Fix the squeaky bedroom door hinge", project="home", tags=["diy"], age_days=33)
+        add("Fix the squeaky bedroom door hinge", project="home", age_days=33)
         add("Draft the September meal plan", project="home.kitchen", due=4, age_days=3)
         add("Update the router firmware", project="home.lab", priority="M", due=-1, age_days=9,
             annotations=["Changelog mentions a WPA3 fix."])
-        add("Write ADR for the undo contract", project="work.sisyphus", tags=["writing"],
+        add("Write ADR for the undo contract", project="work.sisyphus",
             due=5, age_days=2)
         add("Take the winter coats to the cleaner", project="home", age_days=5)
 
-        # Waiting
+        # Deferred legacy fixtures: future wait means postponement, not blocking.
         add("Chase the landlord about the balcony leak", project="home",
             status="waiting", wait=7, age_days=18,
             annotations=["Emailed on the 25th; said he'd reply within two weeks."])
@@ -277,7 +278,7 @@ class FakeTaskRepository:
 
         # Done (recent)
         add("Ship the Nocturne Rose contrast audit", project="work.sisyphus",
-            tags=["design"], done_days_ago=1, age_days=7)
+            done_days_ago=1, age_days=7)
         add("Water and feed the citrus pots", project="home.garden", done_days_ago=2, age_days=4)
         add("Migrate Kavouki state to committed encrypted files", project="work.kavouki",
             done_days_ago=5, age_days=40)

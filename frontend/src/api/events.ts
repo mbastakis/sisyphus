@@ -15,6 +15,7 @@ export function subscribeToTaskChanges(qc: QueryClient): () => void {
       const change = JSON.parse(event.data) as { type: string; generation: number };
       if (change.type !== "tasks.changed") return;
       qc.invalidateQueries({ queryKey: ["board"] });
+      qc.invalidateQueries({ queryKey: ["task"] });
       qc.invalidateQueries({ queryKey: ["boards"] });
       qc.invalidateQueries({ queryKey: ["system"] });
     };

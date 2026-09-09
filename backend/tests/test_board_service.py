@@ -11,7 +11,6 @@ from sisyphus.domain.errors import (
     ConflictError,
     NotFoundError,
     PromptRequiredError,
-    ReadOnlyColumnError,
     ValidationError,
 )
 from sisyphus.repositories.fake import FakeTaskRepository
@@ -61,7 +60,8 @@ def test_lifecycle_classification(svc: BoardService):
     assert column_of(p, backlog.uuid) == "backlog"
     assert column_of(p, ready.uuid) == "ready"
     assert column_of(p, doing.uuid) == "doing"  # doing beats ready
-    assert column_of(p, waiting.uuid) == "waiting"
+    assert column_of(p, waiting.uuid) is None
+    assert p["deferred"][0]["uuid"] == waiting.uuid
     assert column_of(p, done.uuid) == "done"
     assert p["unmapped"] == 0
 
@@ -85,7 +85,7 @@ def test_move_out_of_done_reopens(svc: BoardService):
 
 
 def test_waiting_requires_prompt(svc: BoardService):
-    task = make(svc, "plain")
+    task = make(svc, "plain", ready=True)
     with pytest.raises(PromptRequiredError):
         svc.move_task("lifecycle", task.uuid, "waiting", task.modified.isoformat())
     moved = svc.move_task(
@@ -93,9 +93,10 @@ def test_waiting_requires_prompt(svc: BoardService):
         task.uuid,
         "waiting",
         task.modified.isoformat(),
-        prompt_value=(datetime.now(UTC) + timedelta(days=5)).strftime("%Y-%m-%d"),
+        prompt_value="Accountant must send statement",
     )
-    assert moved.status == "waiting"
+    assert moved.wait is None
+    assert moved.udas["sisyphus_blocker"] == "Accountant must send statement"
 
 
 def test_stale_modified_conflicts(svc: BoardService):
@@ -108,14 +109,16 @@ def test_stale_modified_conflicts(svc: BoardService):
 
 def test_daily_overdue_is_read_only(svc: BoardService):
     task = make(svc, "overdue", due=datetime.now(UTC) - timedelta(days=2))
-    with pytest.raises(ReadOnlyColumnError):
+    with pytest.raises(NotFoundError):
         svc.move_task("daily", task.uuid, "overdue", task.modified.isoformat())
 
 
 def test_daily_clear_due_on_no_date(svc: BoardService):
     task = make(svc, "dated", due=datetime.now(UTC) + timedelta(days=2))
-    moved = svc.move_task("daily", task.uuid, "no-date", task.modified.isoformat())
-    assert moved.due is None
+    due = task.due
+    with pytest.raises(NotFoundError):
+        svc.move_task("daily", task.uuid, "no-date", task.modified.isoformat())
+    assert task.due == due
 
 
 def test_manual_reorder_persists_rank(svc: BoardService):

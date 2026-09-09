@@ -13,7 +13,7 @@ SISYPHUS_HOST="${SISYPHUS_HOST:-0.0.0.0}"
 SISYPHUS_PORT="${SISYPHUS_PORT:-8080}"
 
 if [[ -z "${TZ:-}" ]]; then
-    printf '%s\n' "TZ is required (e.g. TZ=Europe/Athens): Daily-board columns and due:today writes follow the server timezone" >&2
+    printf '%s\n' "TZ is required (e.g. TZ=Europe/Athens): Today, planning and deferral follow the server timezone" >&2
     exit 1
 fi
 
@@ -60,8 +60,7 @@ sync.server.client_id=${TASK_SYNC_CLIENT_ID:?TASK_SYNC_CLIENT_ID is required whe
 sync.encryption_secret=$TASK_SYNC_ENCRYPTION_SECRET
 EOF
         fi
-        # Declare every configured rank UDA so Taskwarrior and other clients
-        # sharing the replica handle Sisyphus rank fields first-class.
+        # Declare rank and planning UDAs; task sync does not distribute taskrc.
         python3 -m sisyphus.config.check --taskrc-udas "$SISYPHUS_CONFIG"
     } >"$SISYPHUS_CONFIG_DIR/taskrc"
 

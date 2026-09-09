@@ -38,6 +38,13 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"uda.{board.ordering.rank_uda}.label=Sisyphus rank ({board.id})")
         print(f"uda.{PROJECT_RANK_UDA}.type=string")
         print(f"uda.{PROJECT_RANK_UDA}.label=Sisyphus rank (project boards)")
+        for name, kind, label in (
+            ("sisyphus_plan", "date", "Planned day"),
+            ("sisyphus_blocker", "string", "Blocked by"),
+            ("sisyphus_followup", "date", "Follow up"),
+        ):
+            print(f"uda.{name}.type={kind}")
+            print(f"uda.{name}.label={label}")
         return 0
 
     print(f"OK: {path} (version {config.version}, {len(config.boards)} boards)")

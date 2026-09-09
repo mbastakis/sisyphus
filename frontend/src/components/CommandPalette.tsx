@@ -99,7 +99,7 @@ export function CommandPalette({ commands, onClose }: Props) {
                   <span className="palette-name">
                     {m.command.name}
                     {m.matchedAlias && (
-                      <span className="palette-alias">{m.matchedAlias}</span>
+                      <span className="palette-alias" aria-hidden="true">{m.matchedAlias}</span>
                     )}
                   </span>
                   {m.command.shortcut && (

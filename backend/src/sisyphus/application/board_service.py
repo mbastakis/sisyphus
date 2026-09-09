@@ -11,6 +11,7 @@ from ..config.models import (
     project_board_id,
 )
 from ..domain import commands as cmd
+from ..domain import policy
 from ..domain.errors import (
     ConflictError,
     NotFoundError,
@@ -22,7 +23,7 @@ from ..domain.task import Task, local_date, local_today, server_timezone
 from ..repositories.port import TaskFilter, TaskRepository
 from . import ranks
 
-# Window during which a finished project keeps its board (recent Done column).
+# Retention for ordinary Done columns; project discovery and history are all-age.
 PROJECT_COMPLETED_DAYS = 14
 
 
@@ -31,15 +32,24 @@ class BoardService:
         self.config = config
         self.repo = repo
 
+    def universe(self) -> dict[str, Task]:
+        return {t.uuid: t for t in self.repo.query(TaskFilter(
+            statuses=["pending", "waiting", "completed", "deleted", "recurring"]
+        ))}
+
+    def card(self, task: Task, board_id: str) -> dict:
+        return _card(task, self.board(board_id), self.universe())
+
     # -- projection ----------------------------------------------------------
 
     def list_boards(self) -> list[dict]:
         """Core boards followed by one board per exact project in use.
 
-        A project board exists while that project holds any task in lifecycle
-        scope (pending, waiting, or completed within the window) and
-        disappears on its own once the project is empty.
+        Project discovery includes all unfinished tasks, recurring templates,
+        and completions of any age. Deleted-only projects are omitted.
         """
+        universe = self.universe()
+        core_counts = self._counts(list(universe.values()), universe)
         out = [
             {
                 "id": b.id,
@@ -48,11 +58,13 @@ class BoardService:
                 "kind": "static",
                 "project": b.scope.project,
                 "open_count": None,
+                "group": None,
+                **core_counts,
             }
             for b in self.config.boards
         ]
         for project, counts in sorted(self._project_index().items()):
-            open_count = counts["open"]
+            open_count = counts["unfinished_count"]
             out.append(
                 {
                     "id": project_board_id(project),
@@ -61,28 +73,39 @@ class BoardService:
                     "kind": "project",
                     "project": project,
                     "open_count": open_count,
+                    **counts,
                 }
             )
         return out
 
-    def _project_index(self) -> dict[str, dict[str, int]]:
+    def _project_index(self) -> dict[str, dict]:
         """Exact projects that currently deserve a board, with task counts."""
-        tasks = self.repo.query(
-            TaskFilter(
-                statuses=["pending", "waiting", "completed"],
-                completed_after=datetime.now(UTC) - timedelta(days=PROJECT_COMPLETED_DAYS),
-            )
-        )
-        index: dict[str, dict[str, int]] = {}
-        for task in tasks:
+        universe = self.universe()
+        projects: dict[str, list[Task]] = {}
+        for task in universe.values():
             project = (task.project or "").strip()
-            if not project:
+            if not project or task.status == "deleted":
                 continue
-            entry = index.setdefault(project, {"open": 0, "total": 0})
-            entry["total"] += 1
-            if task.status in ("pending", "waiting"):
-                entry["open"] += 1
-        return index
+            projects.setdefault(project, []).append(task)
+        return {project: self._counts(tasks, universe, grouped=True)
+                for project, tasks in projects.items()}
+
+    def _counts(self, tasks: list[Task], universe: dict[str, Task], grouped=False) -> dict:
+        states = [(t, policy.describe(t, universe, datetime.now(UTC))) for t in tasks]
+        unfinished = [(t, s) for t, s in states if t.status in ("pending", "waiting", "recurring")]
+        committed = sum(s["lifecycle"] in ("ready", "doing", "waiting")
+                        and not s["deferred"] for _, s in unfinished)
+        waits = [t.wait for t, s in unfinished if s["deferred"]]
+        ends = [t.end for t in tasks if t.status == "completed" and t.end]
+        result = {
+            "committed_count": committed, "unfinished_count": len(unfinished),
+            "backlog_count": sum(s["lifecycle"] == "backlog" and not s["deferred"] for _, s in unfinished),
+            "deferred_count": len(waits), "next_deferred_until": min(waits).isoformat() if waits else None,
+            "last_completed_at": max(ends).isoformat() if ends else None,
+        }
+        if grouped:
+            result["group"] = "active" if committed else "later" if unfinished else "history"
+        return result
 
     def board(self, board_id: str) -> BoardConfig:
         """Resolve a static or dynamic board id, or raise NotFoundError."""
@@ -108,7 +131,7 @@ class BoardService:
             ]
             if parsed:
                 statuses = parsed
-        if board.template in ("lifecycle", "project-lifecycle") and "completed" not in statuses:
+        if board.template in ("lifecycle", "project-lifecycle", "daily") and "completed" not in statuses:
             statuses.append("completed")
         completed_after = None
         if "completed" in statuses:
@@ -122,25 +145,12 @@ class BoardService:
             completed_after=completed_after,
         )
 
-    def _matches(self, board: BoardConfig, col: ColumnConfig, task: Task) -> bool:
+    def _matches(self, board: BoardConfig, col: ColumnConfig, task: Task,
+                 universe: dict[str, Task] | None = None) -> bool:
         m = col.match
         if m.preset:
-            ready = board.ready_tag
-            match m.preset:
-                case "backlog":
-                    return (
-                        task.status == "pending"
-                        and not task.active
-                        and ready not in task.tags
-                    )
-                case "ready":
-                    return task.status == "pending" and not task.active and ready in task.tags
-                case "doing":
-                    return task.status == "pending" and task.active
-                case "waiting":
-                    return task.status == "waiting"
-                case "done":
-                    return task.status == "completed"
+            state = policy.describe(task, universe if universe is not None else self.universe(), datetime.now(UTC))
+            return not state["deferred"] and state["lifecycle"] == m.preset
         f = (m.filter or "").strip()
         today = local_today()
         if f == "due.before:today":
@@ -156,9 +166,12 @@ class BoardService:
     def _classify(self, board: BoardConfig, tasks: list[Task]) -> tuple[dict[str, list[Task]], int]:
         buckets: dict[str, list[Task]] = {c.id: [] for c in board.columns}
         unmapped = 0
+        universe = self.universe()
         for task in tasks:
+            if policy.describe(task, universe, datetime.now(UTC))["deferred"]:
+                continue
             for col in board.columns:
-                if self._matches(board, col, task):
+                if self._matches(board, col, task, universe):
                     buckets[col.id].append(task)
                     break
             else:
@@ -192,19 +205,30 @@ class BoardService:
             return sorted(tasks, key=manual_key)
         return sorted(tasks, key=computed_key)
 
-    def projection(self, board_id: str) -> dict:
+    def projection(self, board_id: str, history: bool = False) -> dict:
         board = self._board(board_id)
-        tasks = self.repo.query(self._scope_filter(board))
-        by_uuid = {t.uuid: t for t in tasks}
+        scope = self._scope_filter(board)
+        if history:
+            scope.statuses = ["completed"]
+            scope.completed_after = None
+            if board.template == "daily":
+                from ..config.models import _lifecycle_columns
+                board = board.model_copy(update={"columns": _lifecycle_columns()})
+        tasks = self.repo.query(scope)
+        by_uuid = self.universe()
         buckets, unmapped = self._classify(board, tasks)
+        if board.template == "daily" and not history:
+            unmapped = 0
         columns = []
         for col in board.columns:
             cards = self._sort(board, buckets[col.id])
+            if history:
+                cards = sorted(cards, key=lambda t: t.end or datetime.min.replace(tzinfo=UTC), reverse=True)
             prompt = None
             if col.write and col.write.prompt:
                 prompt = col.write.prompt.model_dump()
             elif col.write and col.write.preset == "waiting":
-                prompt = {"field": "wait", "input": "date"}
+                prompt = {"field": "blocker", "input": "text"}
             columns.append(
                 {
                     "id": col.id,
@@ -218,6 +242,30 @@ class BoardService:
             )
         last_sync = getattr(self.repo, "last_sync", None)
         sync_detail = getattr(self.repo, "sync_detail", None)
+        today = {key: [] for key in ("attention", "doing", "chosen", "unfinished_plans", "ready_pool", "done_today")}
+        deferred = []
+        for task in self._sort(board, tasks):
+            card = _card(task, board, by_uuid)
+            if card["deferred"] and not history:
+                deferred.append(card)
+                if board.template == "daily" and set(card["attention_reasons"]) & {"due_today", "overdue"}:
+                    today["attention"].append(card)
+            elif board.template == "daily" and not history:
+                if task.status == "completed":
+                    if task.end and local_date(task.end) == local_today():
+                        today["done_today"].append(card)
+                elif card["lifecycle"] == "doing":
+                    today["doing"].append(card)
+                elif card["lifecycle"] == "ready" and card["planned_for"] == local_today().isoformat():
+                    today["chosen"].append(card)
+                elif set(card["attention_reasons"]) - {"unfinished_plan"}:
+                    today["attention"].append(card)
+                elif "unfinished_plan" in card["attention_reasons"]:
+                    today["unfinished_plans"].append(card)
+                elif card["lifecycle"] == "ready":
+                    key = "chosen" if card["planned_for"] == local_today().isoformat() else "ready_pool"
+                    today[key].append(card)
+        today["done_today"].sort(key=lambda c: c["end"] or "", reverse=True)
         return {
             "board": {
                 "id": board.id,
@@ -239,6 +287,9 @@ class BoardService:
             },
             "unmapped": unmapped,
             "columns": columns,
+            "view": "today" if board.template == "daily" and not history else "kanban",
+            "today": today,
+            "deferred": deferred,
         }
 
     # -- mutations -----------------------------------------------------------
@@ -252,26 +303,58 @@ class BoardService:
         if board.scope.project and not project:
             project = board.scope.project
         due = _parse_date(payload.get("due"))
-        # Tags are board-managed lifecycle markers, never user input: a new
-        # task starts untagged and the target column's write rule sets state.
+        if payload.get("priority") not in (None, "", "H", "M", "L"):
+            raise ValidationError("priority must be H, M, L or null")
+        universe = self.universe()
+        dependencies = payload.get("dependencies") or []
+        policy.validate_dependencies(dependencies, universe)
+        annotations = payload.get("annotations") or []
+        if any(not text.strip() for text in annotations):
+            raise ValidationError("annotations cannot be blank")
+        planned = policy.midnight(payload.get("planned_for"))
+        followup = policy.midnight(payload.get("follow_up_on"))
+        blocker = (payload.get("blocker") or "").strip() or None
+        if followup and not (blocker or dependencies):
+            raise ValidationError("follow-up requires a blocker or dependency")
+        udas = {}
+        if blocker:
+            udas[policy.BLOCKER] = blocker
+        if followup:
+            udas[policy.FOLLOWUP] = followup.isoformat()
+        if planned:
+            if blocker or dependencies:
+                raise ValidationError("blocked tasks cannot be planned")
+            udas[policy.PLAN] = planned.isoformat()
+        draft = Task(uuid="new", description=description, status="pending",
+                     tags=["next"] if planned else [], depends=dependencies, udas=udas)
+        mutations: list[cmd.TaskMutation] = []
+        column_id = payload.get("column_id")
+        if planned and column_id == "backlog":
+            raise ValidationError("a planned task is committed; choose Ready or remove the plan")
+        if column_id:
+            creation_board = board
+            if board.template == "daily":
+                from ..config.models import _lifecycle_columns
+                creation_board = board.model_copy(update={"columns": _lifecycle_columns()})
+            col = self._column(creation_board, column_id)
+            if col.read_only:
+                raise ReadOnlyColumnError(f"column {col.name!r} is read-only")
+            mutations = self._write_mutations(board, col, draft, payload.get("prompt_value"))
+        # Validate the full intent before the first persistence operation.
         task = self.repo.create(
             cmd.CreateTask(
                 description=description,
                 project=project,
-                tags=[],
+                tags=draft.tags,
                 priority=payload.get("priority") or None,
                 due=due,
+                udas=udas,
+                depends=dependencies,
+                annotations=annotations,
             )
         )
-        column_id = payload.get("column_id")
-        if column_id:
-            col = self._column(board, column_id)
-            if not col.read_only:
-                mutations = self._write_mutations(
-                    board, col, task, _parse_date(payload.get("prompt_value"))
-                )
-                if mutations:
-                    task = self.repo.apply(task.uuid, mutations)
+        if mutations:
+            task = self.repo.apply(task.uuid, mutations)
         return task
 
     def _column(self, board: BoardConfig, column_id: str) -> ColumnConfig:
@@ -285,59 +368,26 @@ class BoardService:
         board: BoardConfig,
         col: ColumnConfig,
         task: Task,
-        prompt_value: datetime | None,
+        prompt_value: str | None,
     ) -> list[cmd.TaskMutation]:
         assert col.write is not None
         w = col.write
-        muts: list[cmd.TaskMutation] = []
-        ready = board.ready_tag
-
-        def leave_current_state():
-            if task.status == "completed":
-                muts.append(cmd.Reopen())
-            if task.active:
-                muts.append(cmd.Stop())
-
         if w.preset:
-            match w.preset:
-                case "backlog":
-                    leave_current_state()
-                    muts.append(cmd.RemoveTag(ready))
-                    muts.append(cmd.SetField("wait", None))
-                case "ready":
-                    leave_current_state()
-                    muts.append(cmd.AddTag(ready))
-                    muts.append(cmd.SetField("wait", None))
-                case "doing":
-                    if task.status == "completed":
-                        muts.append(cmd.Reopen())
-                    muts.append(cmd.SetField("wait", None))
-                    muts.append(cmd.Start())
-                case "waiting":
-                    if prompt_value is None:
-                        raise PromptRequiredError(
-                            "Waiting needs a wait-until date", "wait", "date"
-                        )
-                    leave_current_state()
-                    muts.append(cmd.SetField("wait", prompt_value))
-                case "done":
-                    if task.status != "completed":
-                        muts.append(cmd.Complete())
-        elif w.set is not None:
-            for field, value in w.set.items():
-                muts.append(cmd.SetField(field, _resolve_value(field, value)))
-        elif w.clear is not None:
-            for field in w.clear:
-                muts.append(cmd.SetField(field, None))
-        elif w.prompt is not None:
-            if prompt_value is None:
-                raise PromptRequiredError(
-                    f"{col.name} needs a {w.prompt.field} date",
-                    w.prompt.field,
-                    w.prompt.input,
-                )
-            muts.append(cmd.SetField(w.prompt.field, prompt_value))
-        return muts
+            from dataclasses import replace
+
+            action = {"doing": "start", "done": "complete", "waiting": "block"}.get(w.preset, w.preset)
+            if action == "block" and not (prompt_value or "").strip():
+                raise PromptRequiredError("Waiting needs a specific blocker", "blocker", "text")
+            universe = self.universe()
+            prefix = []
+            if task.status == "completed" and action != "complete":
+                prefix = [cmd.Reopen(), cmd.Stop()]
+                task = replace(task, status="pending", start=None)
+            if w.preset == "waiting":
+                prefix.append(cmd.AddTag("next"))
+                task = replace(task, tags=list(dict.fromkeys([*task.tags, "next"])))
+            return prefix + policy.transition(task, universe, datetime.now(UTC), action, blocker=prompt_value)
+        raise ValidationError("date-writing board moves are no longer supported")
 
     def move_task(
         self,
@@ -353,7 +403,7 @@ class BoardService:
         if col.read_only:
             raise ReadOnlyColumnError(f"column {col.name!r} is read-only")
         task = self._checked(uuid, expected_modified)
-        muts = self._write_mutations(board, col, task, _parse_date(prompt_value))
+        muts = self._write_mutations(board, col, task, prompt_value)
         muts += self._rank_mutations(board, to_column, task, index, exclude_uuid=uuid)
         if not muts:
             return task
@@ -414,6 +464,8 @@ class BoardService:
         return [cmd.SetUda(uda, ranks.format_rank(my_value))]
 
     def _checked(self, uuid: str, expected_modified: str) -> Task:
+        if not expected_modified:
+            raise ValidationError("expected_modified is required")
         task = self.repo.get(uuid)
         if task is None:
             raise NotFoundError(f"task {uuid} not found")
@@ -443,15 +495,14 @@ def _parse_date(value) -> datetime | None:
         if len(value) == 10:
             d = datetime.strptime(value, "%Y-%m-%d")
             return d.replace(hour=23, minute=59, second=59, tzinfo=tz)
-        return datetime.fromisoformat(value)
-    except ValueError as exc:
+        parsed = datetime.fromisoformat(value)
+        return parsed if parsed.tzinfo else parsed.replace(tzinfo=tz)
+    except (ValueError, TypeError) as exc:
         raise ValidationError(f"invalid date {value!r}") from exc
 
 
 def _card(task: Task, board: BoardConfig, by_uuid: dict[str, Task]) -> dict:
-    open_blockers = [
-        d for d in task.depends if d in by_uuid and by_uuid[d].status in ("pending", "waiting")
-    ]
+    state = policy.describe(task, by_uuid, datetime.now(UTC))
     uda = board.ordering.rank_uda if board.ordering.mode == "manual" else None
     return {
         "uuid": task.uuid,
@@ -474,7 +525,8 @@ def _card(task: Task, board: BoardConfig, by_uuid: dict[str, Task]) -> dict:
             for a in task.annotations
         ],
         "depends": task.depends,
-        "blocked_by_open": len(open_blockers),
+        "blocked_by_open": len(state["open_dependencies"]),
         "rank": task.rank_for(uda) if uda else None,
         "udas": task.udas,
+        **state,
     }

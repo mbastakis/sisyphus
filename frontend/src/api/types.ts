@@ -4,6 +4,16 @@ export interface Annotation {
 }
 
 export interface Card {
+  lifecycle: string;
+  committed: boolean;
+  deferred: boolean;
+  planned_for: string | null;
+  deferred_until: string | null;
+  blocker: string | null;
+  follow_up_on: string | null;
+  open_dependencies: { uuid: string; description: string }[];
+  attention_reasons: string[];
+  allowed_actions: string[];
   uuid: string;
   description: string;
   status: string;
@@ -59,6 +69,9 @@ export interface SyncState {
 }
 
 export interface Projection {
+  view: "kanban" | "today";
+  today: { attention: Card[]; doing: Card[]; chosen: Card[]; unfinished_plans: Card[]; ready_pool: Card[]; done_today: Card[] };
+  deferred: Card[];
   board: BoardMeta;
   generation: number;
   generated_at: string;
@@ -69,6 +82,13 @@ export interface Projection {
 }
 
 export interface BoardSummary {
+  group: "active" | "later" | "history" | null;
+  committed_count: number;
+  unfinished_count: number;
+  backlog_count: number;
+  deferred_count: number;
+  next_deferred_until: string | null;
+  last_completed_at: string | null;
   id: string;
   name: string;
   description: string | null;

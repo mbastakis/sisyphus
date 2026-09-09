@@ -107,7 +107,7 @@ class OrderingConfig(BaseModel):
 
 class CardsConfig(BaseModel):
     fields: list[str] = Field(
-        default_factory=lambda: ["project", "priority", "due", "blockers", "first_tag"]
+        default_factory=lambda: ["project", "priority", "due", "blockers"]
     )
 
 
@@ -140,6 +140,13 @@ class BoardConfig(BaseModel):
 
     @model_validator(mode="after")
     def _expand_template(self):
+        self.ready_tag = DEFAULT_READY_TAG
+        if self.template == "daily":
+            self.name = "Today"
+            self.description = "Ongoing work, daily intent and tasks needing attention"
+            self.columns = []
+            self.mobile.default_column = None
+            return self
         if not self.columns:
             if self.template in ("lifecycle", "project-lifecycle"):
                 self.columns = _lifecycle_columns()

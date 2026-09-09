@@ -1,5 +1,10 @@
 # Sisyphus Rewrite Plan
 
+Historical implementation plan. For current product semantics, use `../CONTEXT.md`
+and ADRs 0005–0010. In particular, Daily deadline columns, `+ready` examples,
+date-based Waiting, and polling assumptions below are superseded; they are not
+instructions for new application or agent behavior.
+
 ## 1. Product Definition
 
 Sisyphus will be a personal, Kanban-first, responsive web application for the Taskwarrior task universe.

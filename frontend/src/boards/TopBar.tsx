@@ -1,7 +1,9 @@
-import { type RefObject } from "react";
+import { useRef, type ReactNode, type RefObject } from "react";
 import type { BoardSummary, Projection, SyncState, SystemInfo } from "../api/types";
 import { SyncIndicator } from "../components/SyncIndicator";
+import { useMenuKeyboard } from "../lib/useMenuKeyboard";
 import { SORT_LABELS, type SortMode } from "./sort";
+import { ProjectNavigation } from "./ProjectNavigation";
 
 interface TopBarProps {
   boardId: string;
@@ -16,15 +18,43 @@ interface TopBarProps {
   onSearch: (value: string) => void;
   switcherOpen: boolean;
   onToggleSwitcher: () => void;
+  onCloseSwitcher: () => void;
   onSelectBoard: (id: string) => void;
   sortMode: SortMode;
   sortMenuOpen: boolean;
   onToggleSortMenu: () => void;
+  onCloseSortMenu: () => void;
   onSelectSort: (mode: SortMode) => void;
+  /** Rendered after the sort control on desktop (e.g. the Deferred button). */
+  extra?: ReactNode;
   syncing: boolean;
   onSync: () => void;
   onCreate: () => void;
   onHelp: () => void;
+}
+
+/** A popover menu that takes keyboard focus when it opens and gives it back
+ * to its trigger when it closes. */
+function Menu({
+  className,
+  label,
+  onClose,
+  initialSelector,
+  children,
+}: {
+  className: string;
+  label: string;
+  onClose: () => void;
+  initialSelector?: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const onKeyDown = useMenuKeyboard(ref, onClose, { initialSelector });
+  return (
+    <div ref={ref} className={className} role="listbox" aria-label={label} onKeyDown={onKeyDown}>
+      {children}
+    </div>
+  );
 }
 
 export function TopBar({
@@ -40,11 +70,14 @@ export function TopBar({
   onSearch,
   switcherOpen,
   onToggleSwitcher,
+  onCloseSwitcher,
   onSelectBoard,
   sortMode,
   sortMenuOpen,
   onToggleSortMenu,
+  onCloseSortMenu,
   onSelectSort,
+  extra,
   syncing,
   onSync,
   onCreate,
@@ -57,12 +90,18 @@ export function TopBar({
         onClick={onToggleSwitcher}
         aria-haspopup="listbox"
         aria-expanded={switcherOpen}
+        title="Switch board (B)"
       >
         <span className="board-name">{projection?.board.name ?? boardId}</span>
         <span className="chevron">▾</span>
       </button>
       {switcherOpen && (
-        <div className="switcher-menu" role="listbox">
+        <Menu
+          className="switcher-menu"
+          label="Boards"
+          onClose={onCloseSwitcher}
+          initialSelector=".switcher-current"
+        >
           {(boards ?? [])
             .filter((b) => b.kind !== "project")
             .map((b) => (
@@ -77,50 +116,40 @@ export function TopBar({
                 {b.description && <small>{b.description}</small>}
               </button>
             ))}
-          {(boards ?? []).some((b) => b.kind === "project") && (
-            <div className="switcher-section">Projects</div>
-          )}
-          {(boards ?? [])
-            .filter((b) => b.kind === "project")
-            .map((b) => (
-              <button
-                key={b.id}
-                role="option"
-                aria-selected={b.id === boardId}
-                className={`switcher-project ${b.id === boardId ? "switcher-current" : ""}`}
-                title={b.project ?? b.name}
-                onClick={() => onSelectBoard(b.id)}
-              >
-                <span className="switcher-project-row">
-                  <span>{b.project ?? b.name}</span>
-                  {b.open_count !== null && (
-                    <small className="tnum switcher-count">{b.open_count}</small>
-                  )}
-                </span>
-              </button>
-            ))}
-        </div>
+          <ProjectNavigation boards={boards ?? []} boardId={boardId} onSelect={onSelectBoard} />
+        </Menu>
       )}
-      <input
-        ref={searchRef}
-        className="search"
-        placeholder="Search  /"
-        value={search}
-        onChange={(e) => onSearch(e.target.value)}
-        aria-label="Search tasks"
-      />
+      <label className="search-wrap">
+        <input
+          ref={searchRef}
+          className="search"
+          type="search"
+          placeholder="Search"
+          value={search}
+          onChange={(e) => onSearch(e.target.value)}
+          aria-label="Search tasks"
+          aria-keyshortcuts="/"
+          autoComplete="off"
+        />
+        {!search && <kbd className="search-hint" aria-hidden="true">/</kbd>}
+      </label>
       <div className="sort-control">
         <button
           className={`sort-button ${sortMode !== "default" ? "sort-active" : ""}`}
-          title="Sort cards"
+          title="Sort cards (O)"
           aria-haspopup="listbox"
           aria-expanded={sortMenuOpen}
           onClick={onToggleSortMenu}
         >
-          ⇅ {SORT_LABELS[sortMode]}
+          <span aria-hidden="true">⇅</span> {SORT_LABELS[sortMode]}
         </button>
         {sortMenuOpen && (
-          <div className="switcher-menu sort-menu" role="listbox">
+          <Menu
+            className="switcher-menu sort-menu"
+            label="Sort cards"
+            onClose={onCloseSortMenu}
+            initialSelector=".switcher-current"
+          >
             {(Object.keys(SORT_LABELS) as SortMode[]).map((mode) => (
               <button
                 key={mode}
@@ -137,9 +166,10 @@ export function TopBar({
                 </span>
               </button>
             ))}
-          </div>
+          </Menu>
         )}
       </div>
+      {extra}
       <span className="column-spacer" />
       {system?.repository === "fake" && (
         <span

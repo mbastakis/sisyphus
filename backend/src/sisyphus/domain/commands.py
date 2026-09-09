@@ -89,3 +89,6 @@ class CreateTask:
     tags: list[str] = field(default_factory=list)
     priority: str | None = None
     due: datetime | None = None
+    udas: dict[str, str] = field(default_factory=dict)
+    depends: list[str] = field(default_factory=list)
+    annotations: list[str] = field(default_factory=list)

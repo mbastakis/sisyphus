@@ -5,12 +5,13 @@ interface Props {
   title: string;
   fieldLabel: string;
   initial?: string;
+  inputType?: "text" | "date";
   onConfirm: (value: string) => void;
   onCancel: () => void;
 }
 
-export function PromptDialog({ title, fieldLabel, initial, onConfirm, onCancel }: Props) {
-  const [value, setValue] = useState(initial ?? todayInputValue(1));
+export function PromptDialog({ title, fieldLabel, initial, inputType = "date", onConfirm, onCancel }: Props) {
+  const [value, setValue] = useState(initial ?? (inputType === "date" ? todayInputValue(1) : ""));
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -35,16 +36,16 @@ export function PromptDialog({ title, fieldLabel, initial, onConfirm, onCancel }
         }}
       >
         <h3>{title}</h3>
-        <div className="quick-dates">
+        {inputType === "date" && <div className="quick-dates">
           <button onClick={() => onConfirm(todayInputValue(0))}>Today</button>
           <button onClick={() => onConfirm(todayInputValue(1))}>Tomorrow</button>
           <button onClick={() => onConfirm(todayInputValue(7))}>Next week</button>
-        </div>
+        </div>}
         <label className="field">
           <span>{fieldLabel}</span>
           <input
             ref={inputRef}
-            type="date"
+            type={inputType}
             value={value}
             onChange={(e) => setValue(e.target.value)}
           />
@@ -54,7 +55,7 @@ export function PromptDialog({ title, fieldLabel, initial, onConfirm, onCancel }
             Cancel
           </button>
           <button className="btn-primary" onClick={submit}>
-            Set date
+            {inputType === "date" ? "Set date" : "Set blocker"}
           </button>
         </div>
       </div>

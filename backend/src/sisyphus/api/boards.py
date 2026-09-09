@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from ..application.board_service import BoardService, _card
+from ..application.board_service import BoardService
 from .deps import board_service
 
 router = APIRouter(prefix="/api/v1/boards", tags=["boards"])
@@ -16,6 +16,11 @@ class CreateTaskBody(BaseModel):
     due: str | None = None
     column_id: str | None = None
     prompt_value: str | None = None
+    planned_for: str | None = None
+    blocker: str | None = None
+    follow_up_on: str | None = None
+    dependencies: list[str] | None = None
+    annotations: list[str] | None = None
 
 
 class MoveBody(BaseModel):
@@ -36,8 +41,8 @@ def list_boards(svc: BoardService = Depends(board_service)):
 
 
 @router.get("/{board_id}")
-def board_projection(board_id: str, svc: BoardService = Depends(board_service)):
-    return svc.projection(board_id)
+def board_projection(board_id: str, history: bool = False, svc: BoardService = Depends(board_service)):
+    return svc.projection(board_id, history=history)
 
 
 @router.post("/{board_id}/tasks", status_code=201)
@@ -45,8 +50,7 @@ def create_task(
     board_id: str, body: CreateTaskBody, svc: BoardService = Depends(board_service)
 ):
     task = svc.create_task(board_id, body.model_dump())
-    board = svc.board(board_id)
-    return {"task": _card(task, board, {task.uuid: task})}
+    return {"task": svc.card(task, board_id)}
 
 
 @router.post("/{board_id}/tasks/{uuid}/move")
@@ -61,8 +65,7 @@ def move_task(
         prompt_value=body.prompt_value,
         index=body.index,
     )
-    board = svc.board(board_id)
-    return {"task": _card(task, board, {task.uuid: task})}
+    return {"task": svc.card(task, board_id)}
 
 
 @router.post("/{board_id}/tasks/{uuid}/reorder")
@@ -70,5 +73,4 @@ def reorder_task(
     board_id: str, uuid: str, body: ReorderBody, svc: BoardService = Depends(board_service)
 ):
     task = svc.reorder_task(board_id, uuid, body.index, body.expected_modified)
-    board = svc.board(board_id)
-    return {"task": _card(task, board, {task.uuid: task})}
+    return {"task": svc.card(task, board_id)}

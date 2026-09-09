@@ -85,7 +85,7 @@ def create_app() -> FastAPI:
         elif isinstance(exc, ConflictError):
             status = 409
             if exc.task is not None:
-                body["task"] = _card(exc.task, _any_board(config), {exc.task.uuid: exc.task})
+                body["task"] = _card(exc.task, _any_board(config), app.state.task_service.universe())
         elif isinstance(exc, PromptRequiredError):
             status = 422
             body["prompt"] = {"field": exc.field, "input": exc.input_kind}
