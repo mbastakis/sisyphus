@@ -1,6 +1,16 @@
 version: "3"
 
 tasks:
+  hooks:install:
+    desc: Install this checkout's native Git hooks (repeatable)
+    cmds:
+      - sh scripts/install-hooks.sh
+
+  hooks:check:
+    desc: Check staged whitespace and Python lint/formatting without rewriting files
+    cmds:
+      - python scripts/check-staged.py
+
   dev:backend:
     desc: Run the backend with fake in-memory data (never touches real Taskwarrior)
     dir: backend
@@ -26,7 +36,7 @@ tasks:
     desc: Lint the backend
     dir: backend
     cmds:
-      - uv run --with ruff ruff check src tests
+      - uv tool run ruff==0.15.0 check src tests
 
   test:taskwarrior:
     desc: Check native planning primitives in a disposable pinned-image replica

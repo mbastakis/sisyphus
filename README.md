@@ -79,6 +79,10 @@ Talking to a real replica requires three explicit opt-ins:
 
 ## Tests and checks
 
+Install the native pre-commit and pre-push hooks with
+`mise exec task -- task hooks:install`. See [Releases and local hooks](docs/releases.md)
+for dependency setup, validation scope, and the release procedure.
+
 ```bash
 mise exec task -- task test:backend     # backend unit + API tests
 mise exec task -- task test:e2e         # Playwright e2e against a production-style server (fake data)
@@ -115,6 +119,11 @@ app-owned commands using the local package. Build and deploy the production imag
 through the normal application workflow.
 
 ## Production
+
+Release-tag pushes publish `ghcr.io/mbastakis/sisyphus` for `linux/amd64`.
+Deployment selects a published image digest and its full source commit explicitly.
+See [Releases and local hooks](docs/releases.md) for artifact metadata and initial
+public GHCR package setup.
 
 `mise exec task -- task build:image` builds a multi-stage container: Node builds the frontend,
 uv installs the backend, Taskwarrior 3.4.2 is compiled and pinned, and FastAPI

@@ -1,0 +1,26 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+
+# A release must validate the same commit that Git is about to publish.
+while read -r _local_ref local_oid remote_ref _remote_oid; do
+    case "$remote_ref" in
+        refs/tags/v*)
+            case "$local_oid" in *[!0]*) ;; *) continue ;; esac
+            if [ "$(git rev-parse "$local_oid^{commit}")" != "$(git rev-parse HEAD)" ]; then
+                echo "Check out the release tag commit before pushing $remote_ref." >&2
+                exit 1
+            fi
+            if ! git diff --quiet HEAD --; then
+                echo "Commit or stash tracked changes before pushing a release tag." >&2
+                exit 1
+            fi
+            if [ -n "$(git ls-files --others --exclude-standard)" ]; then
+                echo "Commit or remove untracked files before pushing a release tag." >&2
+                exit 1
+            fi
+            ;;
+    esac
+done
+
+exec mise exec task -- task validate
